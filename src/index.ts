@@ -3,10 +3,7 @@ import { statSync } from "node:fs";
 import { loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import { QBitClient } from "./clients/qbittorrent.js";
-import { SonarrClient } from "./clients/sonarr.js";
-import { RadarrClient } from "./clients/radarr.js";
-import { LidarrClient } from "./clients/lidarr.js";
-import type { BaseArrClient } from "./clients/arr-client.js";
+import { ArrClient } from "./clients/arr-client.js";
 import { Monitor } from "./monitor.js";
 
 // Warn if .env is readable by group/others
@@ -38,15 +35,15 @@ const qbit = new QBitClient(
 await qbit.login();
 logger.info("qBittorrent authenticated");
 
-const arrClients = new Map<string, BaseArrClient>();
+const arrClients = new Map<string, ArrClient>();
 if (config.sonarr) {
-  arrClients.set("sonarr", new SonarrClient(config.sonarr.url, config.sonarr.apiKey, logger));
+  arrClients.set("sonarr", new ArrClient("Sonarr", config.sonarr.url, config.sonarr.apiKey, "v3", logger));
 }
 if (config.radarr) {
-  arrClients.set("radarr", new RadarrClient(config.radarr.url, config.radarr.apiKey, logger));
+  arrClients.set("radarr", new ArrClient("Radarr", config.radarr.url, config.radarr.apiKey, "v3", logger));
 }
 if (config.lidarr) {
-  arrClients.set("lidarr", new LidarrClient(config.lidarr.url, config.lidarr.apiKey, logger));
+  arrClients.set("lidarr", new ArrClient("Lidarr", config.lidarr.url, config.lidarr.apiKey, "v1", logger));
 }
 
 logger.info({ apps: [...arrClients.keys()] }, "*arr clients configured");

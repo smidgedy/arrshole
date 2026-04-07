@@ -1,6 +1,6 @@
 import type { Logger } from "./logger.js";
 import type { Config } from "./config.js";
-import type { BaseArrClient } from "./clients/arr-client.js";
+import type { ArrClient } from "./clients/arr-client.js";
 import type { QBitClient } from "./clients/qbittorrent.js";
 import { StateTracker } from "./state-tracker.js";
 
@@ -15,7 +15,7 @@ export class Monitor {
 
   constructor(
     private qbit: QBitClient,
-    private arrClients: Map<string, BaseArrClient>,
+    private arrClients: Map<string, ArrClient>,
     private categoryMap: Map<string, string>,
     private config: Config,
     private logger: Logger,

@@ -5,7 +5,7 @@ const METADATA_STATES = new Set(["metaDL", "forcedMetaDL"]);
 
 export class StateTracker {
   private tracked = new Map<string, TrackedState>();
-  private pendingDeletions = new Map<string, true>();
+  private pendingDeletions = new Set<string>();
   private retryCount = new Map<string, number>();
   private static readonly MAX_PENDING_RETRIES = 10;
 
@@ -85,7 +85,7 @@ export class StateTracker {
     const current = this.retryCount.get(hash) ?? 0;
     const count = current + 1;
     if (count <= StateTracker.MAX_PENDING_RETRIES) {
-      this.pendingDeletions.set(hash, true);
+      this.pendingDeletions.add(hash);
       this.retryCount.set(hash, count);
       return true;
     }
@@ -94,7 +94,7 @@ export class StateTracker {
   }
 
   getPendingDeletions(): string[] {
-    const hashes = [...this.pendingDeletions.keys()];
+    const hashes = [...this.pendingDeletions];
     this.pendingDeletions.clear();
     return hashes;
   }

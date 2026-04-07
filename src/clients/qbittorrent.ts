@@ -1,11 +1,8 @@
 import type { Logger } from "../logger.js";
 import type { QBitTorrent } from "../types.js";
+import { drain } from "../util.js";
 
 const REQUEST_TIMEOUT = 15000;
-
-async function drain(response: Response): Promise<void> {
-  await response.body?.cancel();
-}
 
 export class QBitClient {
   private sid: string | null = null;

@@ -1,5 +1,6 @@
 import type { Logger } from "../logger.js";
 import type { ArrQueueRecord } from "../types.js";
+import { drain } from "../util.js";
 
 const REQUEST_TIMEOUT = 15000;
 const PAGE_SIZE = 200;
@@ -27,17 +28,13 @@ interface HistoryResponse {
   }>;
 }
 
-async function drain(response: Response): Promise<void> {
-  await response.body?.cancel();
-}
-
-export abstract class BaseArrClient {
+export class ArrClient {
   constructor(
     readonly name: string,
-    protected baseUrl: string,
-    protected apiKey: string,
-    protected apiVersion: string,
-    protected logger: Logger,
+    private baseUrl: string,
+    private apiKey: string,
+    private apiVersion: string,
+    private logger: Logger,
   ) {}
 
   private get headers(): Record<string, string> {

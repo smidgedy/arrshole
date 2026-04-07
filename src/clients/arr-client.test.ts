@@ -1,7 +1,6 @@
 import { describe, it, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { SonarrClient } from "./sonarr.js";
-import { LidarrClient } from "./lidarr.js";
+import { ArrClient } from "./arr-client.js";
 import { makeSilentLogger } from "../test-helpers.js";
 
 function makeQueueResponse(records: any[], totalRecords?: number) {
@@ -13,7 +12,7 @@ function makeQueueResponse(records: any[], totalRecords?: number) {
   };
 }
 
-describe("BaseArrClient (via SonarrClient)", () => {
+describe("ArrClient", () => {
   let originalFetch: typeof globalThis.fetch;
   let mockFetch: ReturnType<typeof mock.fn<typeof globalThis.fetch>>;
 
@@ -41,7 +40,7 @@ describe("BaseArrClient (via SonarrClient)", () => {
         );
       });
 
-      const client = new SonarrClient("http://localhost:8989", "test-key", makeSilentLogger());
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
       const items = await client.getQueueItems();
 
       assert.equal(items.length, 2);
@@ -77,7 +76,7 @@ describe("BaseArrClient (via SonarrClient)", () => {
         );
       });
 
-      const client = new SonarrClient("http://localhost:8989", "test-key", makeSilentLogger());
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
       const items = await client.getQueueItems();
 
       assert.equal(items.length, 250);
@@ -89,7 +88,7 @@ describe("BaseArrClient (via SonarrClient)", () => {
         return new Response(JSON.stringify(makeQueueResponse([])), { status: 200 });
       });
 
-      const client = new SonarrClient("http://localhost:8989", "my-secret-key", makeSilentLogger());
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "my-secret-key", "v3", makeSilentLogger());
       await client.getQueueItems();
 
       assert.equal(mockFetch.mock.callCount(), 1);
@@ -104,7 +103,7 @@ describe("BaseArrClient (via SonarrClient)", () => {
         return new Response("{}", { status: 200 });
       });
 
-      const client = new SonarrClient("http://localhost:8989", "test-key", makeSilentLogger());
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
       await client.removeAndSearch(42);
 
       assert.equal(mockFetch.mock.callCount(), 1);
@@ -139,7 +138,7 @@ describe("BaseArrClient (via SonarrClient)", () => {
         return new Response("{}", { status: 200 });
       });
 
-      const client = new SonarrClient("http://localhost:8989", "test-key", makeSilentLogger());
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
       await client.markFailed("abc123");
 
       assert.equal(calls.length, 2);
@@ -155,7 +154,7 @@ describe("BaseArrClient (via SonarrClient)", () => {
         );
       });
 
-      const client = new SonarrClient("http://localhost:8989", "test-key", makeSilentLogger());
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
       await assert.rejects(() => client.markFailed("unknown"), /no history record/);
     });
   });
@@ -166,7 +165,7 @@ describe("BaseArrClient (via SonarrClient)", () => {
         return new Response(JSON.stringify(makeQueueResponse([])), { status: 200 });
       });
 
-      const client = new LidarrClient("http://localhost:8686", "test-key", makeSilentLogger());
+      const client = new ArrClient("Lidarr", "http://localhost:8686", "test-key", "v1", makeSilentLogger());
       await client.getQueueItems();
 
       const urlStr = mockFetch.mock.calls[0].arguments[0] as string;
