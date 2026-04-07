@@ -80,6 +80,24 @@ All configuration is via environment variables in `.env`.
 
 If `CATEGORY_MAP` is not set, categories are matched by exact name: `sonarr`, `radarr`, `lidarr`.
 
+## Dry run vs live
+
+`DRY_RUN=true` is the default. In this mode arrshole detects stuck torrents and logs exactly what it would do, but makes no changes. Run it like this first and check the logs to make sure it's identifying the right torrents:
+
+```bash
+npm run dev
+# or if running as a service:
+journalctl -u arrshole -f
+```
+
+Look for `[DRY RUN] Would remove from *arr queue, blocklist, and delete from qBittorrent` lines. Once you're satisfied it's targeting the right things, set `DRY_RUN=false` in `.env` and restart:
+
+```bash
+sudo systemctl restart arrshole
+```
+
+Live mode logs every action at `warn` level — you'll see `arr_notified` and `qbit_deleted` entries for each torrent it processes.
+
 ## Installing as a service
 
 ### WSL2 (tested)
