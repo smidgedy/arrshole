@@ -1,0 +1,26 @@
+[Unit]
+Description=arrshole — stuck torrent monitor
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=smidge
+WorkingDirectory=/home/smidge/development/arrshole
+ExecStart=/home/smidge/.nvm/versions/node/v25.5.0/bin/node dist/index.js
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/smidge/development/arrshole/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=arrshole
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/smidge/development/arrshole
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
