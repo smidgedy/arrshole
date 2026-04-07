@@ -2,6 +2,8 @@
 
 Monitors qBittorrent for stuck torrents and deals with them. When a torrent is stuck downloading metadata or stalled for too long, arrshole tells the relevant *arr app (Sonarr, Radarr, or Lidarr) to blocklist the release and search for an alternative, then deletes the torrent and its files from qBittorrent.
 
+It was written to automatically resolve gridlock in the qBittorrent queue in a way that allows *arr to continue trying download candidates until they're exhausted.
+
 ## What it does
 
 1. Polls qBittorrent every 60 seconds (configurable)
