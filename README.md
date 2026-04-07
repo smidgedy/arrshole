@@ -13,6 +13,10 @@ It was written to automatically resolve gridlock in the qBittorrent queue in a w
 
 Safety features: dry-run mode (on by default), circuit breaker to limit deletions per cycle, re-verification before delete, no deletion of torrents that can't be matched to an *arr app.
 
+## Features, Issues, Requests
+
+If you have any feedback or requests please feel free to raise an issue on this repo, but know that this is unlikely to be monitored closely. I think this problem is actually best solved by the *arr apps and you should ultimately beg their maintainers to implement.
+
 ## Prerequisites
 
 - Node.js 18+
@@ -172,3 +176,7 @@ This project was written entirely by [Claude Code](https://claude.ai/code) (Anth
 ## Recovery
 
 If a release is incorrectly blocklisted, remove it in the *arr app under Activity > Blocklist, then trigger a manual search for the affected episode/movie/album.
+
+## License
+
+There is no license. Do with it what you will, at your own risk.
