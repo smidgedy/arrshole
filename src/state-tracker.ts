@@ -81,14 +81,16 @@ export class StateTracker {
     return stuck;
   }
 
-  addPendingDeletion(hash: string): void {
+  addPendingDeletion(hash: string): boolean {
     const current = this.retryCount.get(hash) ?? 0;
     const count = current + 1;
     if (count <= StateTracker.MAX_PENDING_RETRIES) {
       this.pendingDeletions.set(hash, true);
       this.retryCount.set(hash, count);
+      return true;
     }
-    // else: silently drop — caller logs at error level
+    this.retryCount.delete(hash);
+    return false;
   }
 
   getPendingDeletions(): string[] {

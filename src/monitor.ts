@@ -78,7 +78,9 @@ export class Monitor {
         }
       } catch (err) {
         this.logger.error({ hash, err }, "Orphan deletion retry failed");
-        this.stateTracker.addPendingDeletion(hash);
+        if (!this.stateTracker.addPendingDeletion(hash)) {
+          this.logger.warn({ hash }, "Gave up retrying orphan deletion after max retries");
+        }
       }
     }
 
@@ -222,7 +224,9 @@ export class Monitor {
         { torrent: name, hash, err },
         "qBit delete failed after *arr notification — will retry next cycle",
       );
-      this.stateTracker.addPendingDeletion(hash);
+      if (!this.stateTracker.addPendingDeletion(hash)) {
+        this.logger.warn({ torrent: name, hash }, "Gave up retrying deletion after max retries");
+      }
     }
   }
 }

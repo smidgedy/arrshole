@@ -61,7 +61,7 @@ process.on("unhandledRejection", (err) => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     logger.info({ signal }, "Shutting down");
-    monitor.stop().then(() => process.exit(0));
+    monitor.stop().then(() => process.exit(0), () => process.exit(1));
   });
 }
 

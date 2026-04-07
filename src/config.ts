@@ -120,7 +120,7 @@ export function loadConfig(): Config {
   );
 
   const dryRunEnv = process.env.DRY_RUN;
-  const dryRun = dryRunEnv !== "false";
+  const dryRun = dryRunEnv?.toLowerCase() !== "false";
 
   return {
     qbit: { url: qbitUrl, username: qbitUsername, password: qbitPassword },
