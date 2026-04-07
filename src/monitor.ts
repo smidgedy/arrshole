@@ -11,6 +11,7 @@ export class Monitor {
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private firstCycle = true;
+  private pollPromise: Promise<void> | null = null;
 
   constructor(
     private qbit: QBitClient,
@@ -27,9 +28,12 @@ export class Monitor {
     const loop = async () => {
       if (!this.running) return;
       try {
-        await this.poll();
+        this.pollPromise = this.poll();
+        await this.pollPromise;
       } catch (err) {
         this.logger.error(err, "Poll cycle failed");
+      } finally {
+        this.pollPromise = null;
       }
       if (this.running) {
         this.timeoutId = setTimeout(loop, this.config.pollIntervalMs);
@@ -38,16 +42,18 @@ export class Monitor {
     loop();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.running = false;
     if (this.timeoutId) {
       clearTimeout(this.timeoutId);
       this.timeoutId = null;
     }
+    if (this.pollPromise) {
+      await this.pollPromise;
+    }
   }
 
   async poll(): Promise<void> {
-    // Log configuration on first cycle for operator verification
     if (this.firstCycle) {
       this.logger.info(
         {
@@ -128,7 +134,7 @@ export class Monitor {
     state: string,
     category: string,
   ): Promise<void> {
-    // Step 6a: Resolve *arr app from category
+    // Resolve *arr app from category
     const appName = this.categoryMap.get(category.toLowerCase());
     if (!appName) {
       this.logger.warn(
@@ -138,7 +144,6 @@ export class Monitor {
       return;
     }
 
-    // Step 6b: Get *arr client
     const arrClient = this.arrClients.get(appName);
     if (!arrClient) {
       this.logger.warn(
@@ -148,7 +153,7 @@ export class Monitor {
       return;
     }
 
-    // Step 6c: DRY_RUN check
+    // DRY_RUN check
     if (this.config.dryRun) {
       this.logger.info(
         {
@@ -164,11 +169,11 @@ export class Monitor {
       return;
     }
 
-    // Step 6d: Find in *arr queue
+    // Find in *arr queue
     const queueItems = await arrClient.getQueueItems();
     const match = queueItems.find((q) => q.downloadId === hash.toUpperCase());
 
-    // Step 6e: Notify *arr
+    // Notify *arr
     if (match) {
       await arrClient.removeAndSearch(match.id);
       this.logger.warn(
@@ -176,6 +181,7 @@ export class Monitor {
         `Notified ${arrClient.name} to remove, blocklist, and search for alternative`,
       );
     } else {
+      // markFailed auto-blocklists via DownloadFailedEvent → BlocklistService in the *arr
       await arrClient.markFailed(hash);
       this.logger.warn(
         { action: "arr_notified", app: arrClient.name, torrent: name, method: "history_fallback" },
@@ -183,7 +189,11 @@ export class Monitor {
       );
     }
 
-    // Step 6f: Re-verify torrent state before deletion
+    // Re-verify torrent state before deletion.
+    // Conservative approach: only proceed with deletion if the torrent is still in a
+    // known stuck state. If it transitioned to any other state (even ambiguous ones
+    // like pausedDL/checkingDL), skip deletion. The *arr has already been notified,
+    // and the torrent will be re-detected on the next cycle if it returns to stuck.
     const current = await this.qbit.getTorrent(hash);
     if (!current) {
       this.logger.info({ torrent: name, hash }, "Torrent already gone from qBittorrent");
@@ -193,13 +203,13 @@ export class Monitor {
     if (!STUCK_STATES.has(current.state)) {
       this.logger.info(
         { torrent: name, hash, newState: current.state },
-        "Torrent resumed after *arr notification — skipping deletion",
+        "Torrent left stuck state after *arr notification — skipping deletion",
       );
       this.stateTracker.remove(hash);
       return;
     }
 
-    // Step 6g: Delete from qBit
+    // Delete from qBit
     try {
       await this.qbit.deleteTorrent(hash, true);
       this.logger.warn(

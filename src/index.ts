@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { statSync } from "node:fs";
 import { loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import { QBitClient } from "./clients/qbittorrent.js";
@@ -7,6 +8,18 @@ import { RadarrClient } from "./clients/radarr.js";
 import { LidarrClient } from "./clients/lidarr.js";
 import type { BaseArrClient } from "./clients/arr-client.js";
 import { Monitor } from "./monitor.js";
+
+// Warn if .env is readable by group/others
+try {
+  const mode = statSync(".env").mode & 0o777;
+  if (mode & 0o044) {
+    console.warn(
+      `WARNING: .env is readable by group/others (mode 0o${mode.toString(8)}). Run: chmod 600 .env`,
+    );
+  }
+} catch {
+  /* .env may not exist when using EnvironmentFile */
+}
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
@@ -39,12 +52,17 @@ if (config.lidarr) {
 logger.info({ apps: [...arrClients.keys()] }, "*arr clients configured");
 
 const monitor = new Monitor(qbit, arrClients, config.categoryMap, config, logger);
-monitor.start();
+
+process.on("unhandledRejection", (err) => {
+  logger.fatal({ err }, "Unhandled rejection");
+  process.exit(1);
+});
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     logger.info({ signal }, "Shutting down");
-    monitor.stop();
-    process.exit(0);
+    monitor.stop().then(() => process.exit(0));
   });
 }
+
+monitor.start();

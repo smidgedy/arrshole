@@ -25,12 +25,36 @@ function requireEnv(name: string): string {
   return value;
 }
 
+function parseIntStrict(value: string, name: string, min: number): number {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${name} must be a valid number, got "${value}"`);
+  }
+  if (parsed < min) {
+    throw new Error(`${name} must be at least ${min}`);
+  }
+  return parsed;
+}
+
+function validateUrl(value: string, name: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${name} is not a valid URL: "${value}"`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${name} must use http or https, got "${parsed.protocol}"`);
+  }
+  return parsed.origin;
+}
+
 function loadArrConfig(urlKey: string, apiKeyKey: string): ArrConfig | null {
   const url = process.env[urlKey];
   const apiKey = process.env[apiKeyKey];
 
   if (url && apiKey) {
-    return { url: url.replace(/\/+$/, ""), apiKey };
+    return { url: validateUrl(url, urlKey), apiKey };
   }
   if (url && !apiKey) {
     throw new Error(`${urlKey} is set but ${apiKeyKey} is missing`);
@@ -70,7 +94,7 @@ function buildCategoryMap(
 }
 
 export function loadConfig(): Config {
-  const qbitUrl = requireEnv("QBIT_URL").replace(/\/+$/, "");
+  const qbitUrl = validateUrl(requireEnv("QBIT_URL"), "QBIT_URL");
   const qbitUsername = requireEnv("QBIT_USERNAME");
   const qbitPassword = requireEnv("QBIT_PASSWORD");
 
@@ -82,14 +106,18 @@ export function loadConfig(): Config {
     throw new Error("At least one *arr app must be configured (SONARR, RADARR, or LIDARR)");
   }
 
-  const pollIntervalSeconds = parseInt(process.env.POLL_INTERVAL_SECONDS || "60", 10);
-  if (pollIntervalSeconds < 10) {
-    throw new Error("POLL_INTERVAL_SECONDS must be at least 10");
-  }
-
-  const metadataStuckMinutes = parseInt(process.env.METADATA_STUCK_MINUTES || "10", 10);
-  const stalledStuckHours = parseInt(process.env.STALLED_STUCK_HOURS || "24", 10);
-  const maxActionsPerCycle = parseInt(process.env.MAX_ACTIONS_PER_CYCLE || "5", 10);
+  const pollIntervalSeconds = parseIntStrict(
+    process.env.POLL_INTERVAL_SECONDS || "60", "POLL_INTERVAL_SECONDS", 10,
+  );
+  const metadataStuckMinutes = parseIntStrict(
+    process.env.METADATA_STUCK_MINUTES || "10", "METADATA_STUCK_MINUTES", 1,
+  );
+  const stalledStuckHours = parseIntStrict(
+    process.env.STALLED_STUCK_HOURS || "24", "STALLED_STUCK_HOURS", 1,
+  );
+  const maxActionsPerCycle = parseIntStrict(
+    process.env.MAX_ACTIONS_PER_CYCLE || "5", "MAX_ACTIONS_PER_CYCLE", 1,
+  );
 
   const dryRunEnv = process.env.DRY_RUN;
   const dryRun = dryRunEnv !== "false";

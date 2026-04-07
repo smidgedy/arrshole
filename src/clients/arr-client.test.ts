@@ -2,19 +2,7 @@ import { describe, it, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { SonarrClient } from "./sonarr.js";
 import { LidarrClient } from "./lidarr.js";
-
-function makeSilentLogger() {
-  return {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    fatal: () => {},
-    trace: () => {},
-    child: () => makeSilentLogger(),
-    level: "silent",
-  } as any;
-}
+import { makeSilentLogger } from "../test-helpers.js";
 
 function makeQueueResponse(records: any[], totalRecords?: number) {
   return {

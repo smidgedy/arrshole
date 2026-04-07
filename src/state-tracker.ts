@@ -5,7 +5,9 @@ const METADATA_STATES = new Set(["metaDL", "forcedMetaDL"]);
 
 export class StateTracker {
   private tracked = new Map<string, TrackedState>();
-  private pendingDeletions = new Set<string>();
+  private pendingDeletions = new Map<string, true>();
+  private retryCount = new Map<string, number>();
+  private static readonly MAX_PENDING_RETRIES = 10;
 
   constructor(private getNow: () => number = Date.now) {}
 
@@ -16,7 +18,6 @@ export class StateTracker {
   ): StuckTorrent[] {
     const currentHashes = new Set(torrents.map((t) => t.hash));
 
-    // Prune entries for torrents no longer in qBittorrent
     for (const hash of this.tracked.keys()) {
       if (!currentHashes.has(hash)) {
         this.tracked.delete(hash);
@@ -31,11 +32,6 @@ export class StateTracker {
         const isMetadata = METADATA_STATES.has(torrent.state);
 
         if (isMetadata) {
-          // metaDL is the initial state for magnet links. We use time_active (seconds
-          // the torrent has been running, excluding time spent queued) for immediate
-          // detection — even on the first poll after a service restart. This is safe
-          // even if the torrent waited in queuedDL for hours before entering metaDL,
-          // because time_active only counts active time.
           const activeMs = torrent.time_active * 1000;
 
           if (activeMs >= metadataStuckMs) {
@@ -47,10 +43,8 @@ export class StateTracker {
               stuckDurationMs: activeMs,
             });
           }
-          // Clean up any stale stalledDL tracking entry if state changed to metaDL
           this.tracked.delete(torrent.hash);
         } else {
-          // stalledDL can happen at any point — must poll-track with firstSeenAt
           const existing = this.tracked.get(torrent.hash);
 
           if (!existing) {
@@ -78,23 +72,27 @@ export class StateTracker {
           }
         }
       } else {
-        // Torrent is in a non-stuck state — remove from tracking if present
         this.tracked.delete(torrent.hash);
       }
     }
 
-    // Sort by duration descending (oldest first) for circuit breaker
     stuck.sort((a, b) => b.stuckDurationMs - a.stuckDurationMs);
 
     return stuck;
   }
 
   addPendingDeletion(hash: string): void {
-    this.pendingDeletions.add(hash);
+    const current = this.retryCount.get(hash) ?? 0;
+    const count = current + 1;
+    if (count <= StateTracker.MAX_PENDING_RETRIES) {
+      this.pendingDeletions.set(hash, true);
+      this.retryCount.set(hash, count);
+    }
+    // else: silently drop — caller logs at error level
   }
 
   getPendingDeletions(): string[] {
-    const hashes = [...this.pendingDeletions];
+    const hashes = [...this.pendingDeletions.keys()];
     this.pendingDeletions.clear();
     return hashes;
   }
@@ -102,5 +100,6 @@ export class StateTracker {
   remove(hash: string): void {
     this.tracked.delete(hash);
     this.pendingDeletions.delete(hash);
+    this.retryCount.delete(hash);
   }
 }

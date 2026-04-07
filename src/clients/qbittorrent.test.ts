@@ -2,6 +2,7 @@ import { describe, it, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { QBitClient } from "./qbittorrent.js";
 import type { QBitTorrent } from "../types.js";
+import { makeSilentLogger } from "../test-helpers.js";
 
 const SAMPLE_TORRENT: QBitTorrent = {
   hash: "abc123def456",
@@ -15,19 +16,6 @@ const SAMPLE_TORRENT: QBitTorrent = {
   dlspeed: 0,
   size: 1000000000,
 };
-
-function makeSilentLogger() {
-  return {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    fatal: () => {},
-    trace: () => {},
-    child: () => makeSilentLogger(),
-    level: "silent",
-  } as any;
-}
 
 describe("QBitClient", () => {
   let originalFetch: typeof globalThis.fetch;
@@ -72,6 +60,15 @@ describe("QBitClient", () => {
 
       const client = new QBitClient("http://localhost:8080", "admin", "pass", makeSilentLogger());
       await assert.rejects(() => client.login(), /login failed.*403/);
+    });
+
+    it("throws when Ok response has no SID cookie", async () => {
+      mockFetch.mock.mockImplementation(async () => {
+        return new Response("Ok.", { status: 200 });
+      });
+
+      const client = new QBitClient("http://localhost:8080", "admin", "pass", makeSilentLogger());
+      await assert.rejects(() => client.login(), /no SID cookie/);
     });
   });
 
@@ -202,6 +199,34 @@ describe("QBitClient", () => {
       const body = init?.body as string;
       assert.ok(body.includes("hashes=abc123def456"));
       assert.ok(body.includes("deleteFiles=true"));
+    });
+
+    it("re-authenticates on 403 and retries", async () => {
+      let loginCount = 0;
+      let deleteCallCount = 0;
+
+      mockFetch.mock.mockImplementation(async (url) => {
+        const urlStr = typeof url === "string" ? url : url.toString();
+        if (urlStr.includes("/auth/login")) {
+          loginCount++;
+          return new Response("Ok.", {
+            status: 200,
+            headers: { "Set-Cookie": "SID=new_session; path=/" },
+          });
+        }
+        deleteCallCount++;
+        if (deleteCallCount === 1) {
+          return new Response("Forbidden", { status: 403 });
+        }
+        return new Response("", { status: 200 });
+      });
+
+      const client = new QBitClient("http://localhost:8080", "admin", "pass", makeSilentLogger());
+      await client.login();
+      await client.deleteTorrent("abc123def456", true);
+
+      assert.equal(loginCount, 2);
+      assert.equal(deleteCallCount, 2);
     });
   });
 });

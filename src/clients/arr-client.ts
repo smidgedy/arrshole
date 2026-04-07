@@ -3,6 +3,7 @@ import type { ArrQueueRecord } from "../types.js";
 
 const REQUEST_TIMEOUT = 15000;
 const PAGE_SIZE = 200;
+const MAX_PAGES = 50;
 
 interface QueueResponse {
   page: number;
@@ -26,6 +27,10 @@ interface HistoryResponse {
   }>;
 }
 
+async function drain(response: Response): Promise<void> {
+  await response.body?.cancel();
+}
+
 export abstract class BaseArrClient {
   constructor(
     readonly name: string,
@@ -47,7 +52,7 @@ export abstract class BaseArrClient {
     const allRecords: ArrQueueRecord[] = [];
     let page = 1;
 
-    while (true) {
+    while (page <= MAX_PAGES) {
       const url = this.apiUrl(`/queue?page=${page}&pageSize=${PAGE_SIZE}`);
       this.logger.debug({ url, app: this.name }, "Fetching queue page");
 
@@ -57,6 +62,7 @@ export abstract class BaseArrClient {
       });
 
       if (!response.ok) {
+        await drain(response);
         throw new Error(`${this.name} getQueueItems failed: HTTP ${response.status}`);
       }
 
@@ -76,6 +82,13 @@ export abstract class BaseArrClient {
       page++;
     }
 
+    if (page > MAX_PAGES) {
+      this.logger.warn(
+        { app: this.name, pages: MAX_PAGES, fetched: allRecords.length },
+        "Pagination limit reached — queue may be incomplete",
+      );
+    }
+
     return allRecords;
   }
 
@@ -92,10 +105,15 @@ export abstract class BaseArrClient {
     });
 
     if (!response.ok) {
+      await drain(response);
       throw new Error(`${this.name} removeAndSearch failed: HTTP ${response.status}`);
     }
+    await drain(response);
   }
 
+  // markFailed uses POST /history/failed/{id} which unconditionally blocklists
+  // the release via DownloadFailedEvent → BlocklistService.Handle in the *arr
+  // source code, and triggers a re-search if AutoRedownloadFailed is enabled.
   async markFailed(downloadHash: string): Promise<void> {
     const upperHash = downloadHash.toUpperCase();
     const historyUrl = this.apiUrl(
@@ -109,6 +127,7 @@ export abstract class BaseArrClient {
     });
 
     if (!historyResponse.ok) {
+      await drain(historyResponse);
       throw new Error(`${this.name} history lookup failed: HTTP ${historyResponse.status}`);
     }
 
@@ -131,7 +150,9 @@ export abstract class BaseArrClient {
     });
 
     if (!failedResponse.ok) {
+      await drain(failedResponse);
       throw new Error(`${this.name} markFailed failed: HTTP ${failedResponse.status}`);
     }
+    await drain(failedResponse);
   }
 }

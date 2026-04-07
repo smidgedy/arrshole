@@ -5,6 +5,6 @@ export type Logger = pino.Logger;
 export function createLogger(level: string): Logger {
   return pino({
     level,
-    redact: ["*.password", "*.apiKey"],
+    redact: ["*.password", "*.apiKey", "*.*.password", "*.*.apiKey"],
   });
 }

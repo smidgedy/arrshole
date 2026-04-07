@@ -3,23 +3,10 @@ import assert from "node:assert/strict";
 import { Monitor } from "./monitor.js";
 import type { Config } from "./config.js";
 import type { QBitTorrent, ArrQueueRecord } from "./types.js";
+import { makeSilentLogger } from "./test-helpers.js";
 
 const TEN_MINUTES = 10 * 60 * 1000;
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-
-function makeSilentLogger() {
-  const logger: any = {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    fatal: () => {},
-    trace: () => {},
-    child: () => makeSilentLogger(),
-    level: "silent",
-  };
-  return logger;
-}
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {

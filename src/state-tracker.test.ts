@@ -270,6 +270,22 @@ describe("StateTracker", () => {
       const pending2 = tracker.getPendingDeletions();
       assert.equal(pending2.length, 0);
     });
+
+    it("drops pending deletions after max retries (10)", () => {
+      const tracker = new StateTracker();
+
+      // Add 10 times (should all succeed)
+      for (let i = 0; i < 10; i++) {
+        tracker.addPendingDeletion("hash1");
+        // Simulate the get-and-clear + re-add cycle
+        tracker.getPendingDeletions();
+      }
+
+      // 11th attempt — should be silently dropped
+      tracker.addPendingDeletion("hash1");
+      const pending = tracker.getPendingDeletions();
+      assert.equal(pending.length, 0);
+    });
   });
 
   describe("remove()", () => {

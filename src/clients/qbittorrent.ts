@@ -3,6 +3,10 @@ import type { QBitTorrent } from "../types.js";
 
 const REQUEST_TIMEOUT = 15000;
 
+async function drain(response: Response): Promise<void> {
+  await response.body?.cancel();
+}
+
 export class QBitClient {
   private sid: string | null = null;
 
@@ -27,6 +31,7 @@ export class QBitClient {
     });
 
     if (!response.ok) {
+      await drain(response);
       throw new Error(`qBittorrent login failed: HTTP ${response.status}`);
     }
 
@@ -35,6 +40,7 @@ export class QBitClient {
       const match = setCookie.match(/SID=([^;]+)/);
       if (match) {
         this.sid = match[1];
+        await drain(response);
         this.logger.debug("qBittorrent authenticated");
         return;
       }
@@ -42,7 +48,9 @@ export class QBitClient {
 
     const text = await response.text();
     if (text === "Ok.") {
-      this.logger.warn("qBittorrent login returned Ok but no SID cookie — session may not persist");
+      throw new Error(
+        "qBittorrent login returned Ok but no SID cookie — authentication will not persist",
+      );
     } else {
       throw new Error(`qBittorrent login failed: unexpected response "${text}"`);
     }
@@ -52,26 +60,35 @@ export class QBitClient {
     return this.sid ? `SID=${this.sid}` : "";
   }
 
-  async getTorrents(): Promise<QBitTorrent[]> {
-    const doFetch = async (): Promise<Response> => {
-      return fetch(`${this.url}/api/v2/torrents/info`, {
-        headers: { Cookie: this.cookieHeader },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
-      });
-    };
-
-    let response = await doFetch();
+  private async fetchWithReauth(
+    request: () => Promise<Response>,
+  ): Promise<Response> {
+    let response = await request();
 
     if (response.status === 403) {
+      await drain(response);
       this.logger.debug("qBittorrent session expired, re-authenticating");
       await this.login();
-      response = await doFetch();
+      response = await request();
       if (response.status === 403) {
+        await drain(response);
         throw new Error("qBittorrent re-authentication failed");
       }
     }
 
+    return response;
+  }
+
+  async getTorrents(): Promise<QBitTorrent[]> {
+    const response = await this.fetchWithReauth(() =>
+      fetch(`${this.url}/api/v2/torrents/info`, {
+        headers: { Cookie: this.cookieHeader },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      }),
+    );
+
     if (!response.ok) {
+      await drain(response);
       throw new Error(`qBittorrent getTorrents failed: HTTP ${response.status}`);
     }
 
@@ -79,24 +96,16 @@ export class QBitClient {
   }
 
   async getTorrent(hash: string): Promise<QBitTorrent | null> {
-    const doFetch = async (): Promise<Response> => {
-      return fetch(`${this.url}/api/v2/torrents/info?hashes=${hash}`, {
+    const params = new URLSearchParams({ hashes: hash });
+    const response = await this.fetchWithReauth(() =>
+      fetch(`${this.url}/api/v2/torrents/info?${params}`, {
         headers: { Cookie: this.cookieHeader },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT),
-      });
-    };
-
-    let response = await doFetch();
-
-    if (response.status === 403) {
-      await this.login();
-      response = await doFetch();
-      if (response.status === 403) {
-        throw new Error("qBittorrent re-authentication failed");
-      }
-    }
+      }),
+    );
 
     if (!response.ok) {
+      await drain(response);
       throw new Error(`qBittorrent getTorrent failed: HTTP ${response.status}`);
     }
 
@@ -110,18 +119,22 @@ export class QBitClient {
       deleteFiles: String(deleteFiles),
     });
 
-    const response = await fetch(`${this.url}/api/v2/torrents/delete`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Cookie: this.cookieHeader,
-      },
-      body: body.toString(),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
-    });
+    const response = await this.fetchWithReauth(() =>
+      fetch(`${this.url}/api/v2/torrents/delete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Cookie: this.cookieHeader,
+        },
+        body: body.toString(),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      }),
+    );
 
     if (!response.ok) {
+      await drain(response);
       throw new Error(`qBittorrent deleteTorrent failed: HTTP ${response.status}`);
     }
+    await drain(response);
   }
 }

@@ -9,9 +9,12 @@ StartLimitBurst=5
 Type=simple
 User=smidge
 WorkingDirectory=/home/smidge/development/arrshole
-ExecStart=/home/smidge/.nvm/versions/node/v25.5.0/bin/node dist/index.js
+# Update PATH if your Node.js installation changes. Find it with: which node
+Environment=PATH=/home/smidge/.nvm/versions/node/v25.5.0/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node dist/index.js
 Restart=always
 RestartSec=10
+TimeoutStopSec=120
 EnvironmentFile=/home/smidge/development/arrshole/.env
 StandardOutput=journal
 StandardError=journal
