@@ -13,6 +13,10 @@ It was written to automatically resolve gridlock in the qBittorrent queue in a w
 
 Safety features: dry-run mode (on by default), circuit breaker to limit deletions per cycle, re-verification before delete, no deletion of torrents that can't be matched to an *arr app.
 
+## Project status
+
+Let's be blunt - this is "vibe coded" with claude code. It's not my first rodeo, and I'm working in Typescript mainly so that I can tell when the robot is going *off-piste*. It's tested and working in my environment, and that's really all it's built to do. I've tried to structure things in a way that it should work in other places, but you will be testing. This is not a "mature" product, and it is unlikely that it ever will be.
+
 ## Features, Issues, Requests
 
 If you have any feedback or requests please feel free to raise an issue on this repo, but know that this is unlikely to be monitored closely. I think this problem is actually best solved by the *arr apps and you should ultimately beg their maintainers to implement.
