@@ -5,6 +5,7 @@ import { createLogger } from "./logger.js";
 import { QBitClient } from "./clients/qbittorrent.js";
 import { ArrClient } from "./clients/arr-client.js";
 import { Monitor } from "./monitor.js";
+import { StateTracker } from "./state-tracker.js";
 
 // Warn if .env is readable by group/others
 try {
@@ -22,7 +23,17 @@ const config = loadConfig();
 const logger = createLogger(config.logLevel);
 
 logger.info(
-  { dryRun: config.dryRun, pollIntervalMs: config.pollIntervalMs },
+  {
+    dryRun: config.dryRun,
+    pollIntervalMs: config.pollIntervalMs,
+    stalledThresholds: config.stalledThresholds.map((t) => ({
+      maxProgress: t.maxProgress + "%",
+      hours: t.stuckMs / 3600000,
+    })),
+    stateFilePath: config.stateFilePath,
+    nodeVersion: process.version,
+    pid: process.pid,
+  },
   "arrshole starting",
 );
 
@@ -48,16 +59,24 @@ if (config.lidarr) {
 
 logger.info({ apps: [...arrClients.keys()] }, "*arr clients configured");
 
-const monitor = new Monitor(qbit, arrClients, config.categoryMap, config, logger);
+const stateTracker = new StateTracker(logger, config.stateFilePath);
+stateTracker.loadFromDisk();
+
+const monitor = new Monitor(qbit, arrClients, config.categoryMap, config, logger, stateTracker);
 
 process.on("unhandledRejection", (err) => {
-  logger.fatal({ err }, "Unhandled rejection");
+  logger.fatal({ err, uptimeSeconds: Math.round(process.uptime()) }, "Unhandled rejection — exiting");
+  process.exit(1);
+});
+
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err, uptimeSeconds: Math.round(process.uptime()) }, "Uncaught exception — exiting");
   process.exit(1);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    logger.info({ signal }, "Shutting down");
+    logger.info({ signal, uptimeSeconds: Math.round(process.uptime()) }, "Shutting down");
     monitor.stop().then(() => process.exit(0), () => process.exit(1));
   });
 }

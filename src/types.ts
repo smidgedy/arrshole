@@ -32,3 +32,18 @@ export interface TrackedState {
   category: string;
   firstSeenAt: number;
 }
+
+/** Progress-based stalled threshold: torrents at or below maxProgress% use this stuckMs. */
+export interface StalledThreshold {
+  maxProgress: number; // 0–100 percentage
+  stuckMs: number;
+}
+
+/** Shape of the persisted state file on disk. */
+export interface PersistedState {
+  version: 1;
+  savedAt: number;
+  tracked: TrackedState[];
+  pendingDeletions: string[];
+  retryCounts: [string, number][];
+}

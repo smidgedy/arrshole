@@ -1,6 +1,7 @@
 import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { Monitor } from "./monitor.js";
+import { StateTracker } from "./state-tracker.js";
 import type { Config } from "./config.js";
 import type { QBitTorrent, ArrQueueRecord } from "./types.js";
 import { makeSilentLogger } from "./test-helpers.js";
@@ -17,10 +18,11 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     categoryMap: new Map([["sonarr", "sonarr"]]),
     pollIntervalMs: 60000,
     metadataStuckMs: TEN_MINUTES,
-    stalledStuckMs: TWENTY_FOUR_HOURS,
+    stalledThresholds: [{ maxProgress: 100, stuckMs: TWENTY_FOUR_HOURS }],
     maxActionsPerCycle: 5,
     dryRun: false,
     logLevel: "silent",
+    stateFilePath: "",
     ...overrides,
   };
 }
@@ -84,7 +86,7 @@ describe("Monitor", () => {
 
     const config = makeConfig();
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll();
     assert.equal(mockArr.removeAndSearch.mock.callCount(), 0);
@@ -102,7 +104,7 @@ describe("Monitor", () => {
 
     const config = makeConfig();
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     // metaDL with time_active > threshold is detected on first poll
     await monitor.poll();
@@ -127,7 +129,7 @@ describe("Monitor", () => {
 
     const config = makeConfig();
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll();
 
@@ -145,7 +147,7 @@ describe("Monitor", () => {
 
     const config = makeConfig({ dryRun: true });
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll();
 
@@ -163,7 +165,7 @@ describe("Monitor", () => {
 
     const config = makeConfig();
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll();
 
@@ -182,7 +184,7 @@ describe("Monitor", () => {
 
     const config = makeConfig();
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll();
 
@@ -206,7 +208,7 @@ describe("Monitor", () => {
 
     const config = makeConfig();
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll();
 
@@ -232,7 +234,7 @@ describe("Monitor", () => {
 
     const config = makeConfig({ maxActionsPerCycle: 3 });
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll();
 
@@ -254,7 +256,7 @@ describe("Monitor", () => {
 
     const config = makeConfig();
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll(); // process — arr succeeds, qBit fails
 
@@ -288,7 +290,7 @@ describe("Monitor", () => {
 
     const config = makeConfig();
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     await monitor.poll(); // process — delete fails, goes to pending
 
@@ -308,9 +310,9 @@ describe("Monitor", () => {
     mockQbit.getTorrents.mock.mockImplementation(async () => [torrent]);
 
     // Use a short threshold for testing
-    const config = makeConfig({ stalledStuckMs: 0 });
+    const config = makeConfig({ stalledThresholds: [{ maxProgress: 100, stuckMs: 0 }] });
     const arrClients = new Map([["sonarr", mockArr as any]]);
-    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger());
+    const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
     // First poll — starts tracking, not stuck yet
     await monitor.poll();

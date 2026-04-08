@@ -18,8 +18,9 @@ function setEnv(overrides: Record<string, string | undefined> = {}) {
   }
   for (const key of [
     "RADARR_URL", "RADARR_API_KEY", "LIDARR_URL", "LIDARR_API_KEY",
-    "POLL_INTERVAL_SECONDS", "METADATA_STUCK_MINUTES", "STALLED_STUCK_HOURS",
+    "POLL_INTERVAL_SECONDS", "METADATA_STUCK_MINUTES", "STALLED_THRESHOLDS",
     "MAX_ACTIONS_PER_CYCLE", "DRY_RUN", "LOG_LEVEL", "CATEGORY_MAP",
+    "STATE_FILE",
   ]) {
     delete process.env[key];
   }
@@ -41,9 +42,12 @@ describe("loadConfig", () => {
     assert.equal(config.sonarr.url, "http://localhost:8989");
     assert.equal(config.pollIntervalMs, 60000);
     assert.equal(config.metadataStuckMs, 10 * 60 * 1000);
-    assert.equal(config.stalledStuckMs, 24 * 60 * 60 * 1000);
+    assert.equal(config.stalledThresholds.length, 1);
+    assert.equal(config.stalledThresholds[0].maxProgress, 100);
+    assert.equal(config.stalledThresholds[0].stuckMs, 24 * 60 * 60 * 1000);
     assert.equal(config.maxActionsPerCycle, 5);
     assert.equal(config.dryRun, true);
+    assert.equal(config.stateFilePath, "./arrshole-state.json");
   });
 
   it("throws when QBIT_URL is missing", () => {
@@ -105,6 +109,34 @@ describe("loadConfig", () => {
     process.env.DRY_RUN = "false";
     const config = loadConfig();
     assert.equal(config.dryRun, false);
+  });
+
+  it("parses STALLED_THRESHOLDS correctly", () => {
+    process.env.STALLED_THRESHOLDS = "10:1,90:12,100:24";
+    const config = loadConfig();
+    assert.equal(config.stalledThresholds.length, 3);
+    assert.equal(config.stalledThresholds[0].maxProgress, 10);
+    assert.equal(config.stalledThresholds[0].stuckMs, 1 * 60 * 60 * 1000);
+    assert.equal(config.stalledThresholds[1].maxProgress, 90);
+    assert.equal(config.stalledThresholds[1].stuckMs, 12 * 60 * 60 * 1000);
+    assert.equal(config.stalledThresholds[2].maxProgress, 100);
+    assert.equal(config.stalledThresholds[2].stuckMs, 24 * 60 * 60 * 1000);
+  });
+
+  it("throws on STALLED_THRESHOLDS without 100% coverage", () => {
+    process.env.STALLED_THRESHOLDS = "50:12";
+    assert.throws(() => loadConfig(), /covering 100%/);
+  });
+
+  it("throws on invalid STALLED_THRESHOLDS entry", () => {
+    process.env.STALLED_THRESHOLDS = "bad";
+    assert.throws(() => loadConfig(), /Expected format/);
+  });
+
+  it("uses STATE_FILE from env", () => {
+    process.env.STATE_FILE = "/tmp/test-state.json";
+    const config = loadConfig();
+    assert.equal(config.stateFilePath, "/tmp/test-state.json");
   });
 
   it("builds default categoryMap from configured apps", () => {

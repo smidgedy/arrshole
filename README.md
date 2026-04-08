@@ -8,8 +8,10 @@ It was written to automatically resolve gridlock in the qBittorrent queue in a w
 
 1. Polls qBittorrent every 60 seconds (configurable)
 2. Detects torrents stuck in `metaDL` (metadata download) or `stalledDL` (stalled) beyond configurable thresholds
-3. Notifies the owning *arr app to blocklist the release and search for a replacement
-4. Deletes the torrent and files from qBittorrent (only after the *arr app has been notified)
+3. For stalled torrents, applies progress-based thresholds — torrents barely started can be cleared quickly, while nearly-complete ones get more time to recover
+4. Notifies the owning *arr app to blocklist the release and search for a replacement
+5. Deletes the torrent and files from qBittorrent (only after the *arr app has been notified)
+6. Persists tracking state to disk so timers survive service restarts
 
 Safety features: dry-run mode (on by default), circuit breaker to limit deletions per cycle, re-verification before delete, no deletion of torrents that can't be matched to an *arr app.
 
@@ -71,14 +73,30 @@ All configuration is via environment variables in `.env`.
 | `CATEGORY_MAP` | No | Auto-detected | Custom category mapping, e.g. `tv-sonarr:sonarr,movies:radarr` |
 | `POLL_INTERVAL_SECONDS` | No | `60` | Poll interval (minimum 10) |
 | `METADATA_STUCK_MINUTES` | No | `10` | Minutes in metaDL before acting |
-| `STALLED_STUCK_HOURS` | No | `24` | Hours in stalledDL before acting |
+| `STALLED_THRESHOLDS` | No | `100:24` | Progress-based stalled thresholds (see below) |
 | `MAX_ACTIONS_PER_CYCLE` | No | `5` | Max deletions per poll cycle (circuit breaker) |
 | `DRY_RUN` | No | `true` | Set to `false` to enable destructive actions |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
+| `STATE_FILE` | No | `./arrshole-state.json` | Path to persist tracking state across restarts |
 
 *At least one *arr app (URL + API key pair) must be configured.
 
 If `CATEGORY_MAP` is not set, categories are matched by exact name: `sonarr`, `radarr`, `lidarr`.
+
+### Stalled thresholds
+
+`STALLED_THRESHOLDS` lets you set different timeouts for stalled torrents based on how much they've downloaded. Format: `maxPercent:hours,maxPercent:hours,...` — the last entry must cover 100%.
+
+Example: `10:1,90:12,100:24` means:
+- Torrents at **10% or less** — clear after **1 hour** stalled (barely started, not worth waiting)
+- Torrents at **11–90%** — clear after **12 hours** stalled
+- Torrents at **91–100%** — clear after **24 hours** stalled (nearly done, give them time)
+
+The default `100:24` applies a flat 24-hour threshold to all stalled torrents regardless of progress.
+
+### State persistence
+
+arrshole tracks when it first observes each torrent in a stalled state. This tracking is persisted to disk (at `STATE_FILE`, default `./arrshole-state.json`) so that stall timers survive service restarts. If a torrent resumes downloading, its timer is cleared. On startup, arrshole logs how many tracked entries were restored and how long ago the state was saved.
 
 ## Dry run vs live
 

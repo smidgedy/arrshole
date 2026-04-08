@@ -19,8 +19,9 @@ export class Monitor {
     private categoryMap: Map<string, string>,
     private config: Config,
     private logger: Logger,
+    stateTracker?: StateTracker,
   ) {
-    this.stateTracker = new StateTracker();
+    this.stateTracker = stateTracker ?? new StateTracker(logger, config.stateFilePath);
   }
 
   start(): void {
@@ -91,7 +92,7 @@ export class Monitor {
     let stuckList = this.stateTracker.update(
       torrents,
       this.config.metadataStuckMs,
-      this.config.stalledStuckMs,
+      this.config.stalledThresholds,
     );
 
     this.logger.info(
