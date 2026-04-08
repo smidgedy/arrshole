@@ -541,6 +541,35 @@ describe("StateTracker", () => {
       cleanup();
     });
 
+    it("handles unknown state file version gracefully", () => {
+      const futureState = { version: 99, savedAt: Date.now(), tracked: [], pendingDeletions: [], retryCounts: [] };
+      writeFileSync(testFile, JSON.stringify(futureState));
+      const tracker = new StateTracker(undefined, testFile, () => 1000000);
+      tracker.loadFromDisk(); // should not throw, starts fresh
+
+      const result = tracker.update(
+        [makeTorrent({ state: "stalledDL" })],
+        TEN_MINUTES,
+        FLAT_THRESHOLDS,
+      );
+      // Should treat as fresh start — no tracked entries loaded
+      assert.equal(result.length, 0);
+      cleanup();
+    });
+
+    it("handles write failure gracefully (read-only path)", () => {
+      const badPath = "/dev/null/impossible/state.json";
+      const tracker = new StateTracker(undefined, badPath, () => 1000000);
+
+      // update() triggers saveToDisk internally — should not throw
+      const result = tracker.update(
+        [makeTorrent({ state: "stalledDL" })],
+        TEN_MINUTES,
+        FLAT_THRESHOLDS,
+      );
+      assert.equal(result.length, 0);
+    });
+
     it("clears persisted state when torrent resumes downloading", () => {
       cleanup();
       let now = 1000000;

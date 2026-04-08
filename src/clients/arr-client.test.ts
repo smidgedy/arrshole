@@ -115,6 +115,26 @@ describe("ArrClient", () => {
       const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
       await assert.rejects(() => client.getQueueItems(), /getQueueItems returned invalid JSON/);
     });
+
+    it("stops paginating and warns at MAX_PAGES limit", async () => {
+      // Return totalRecords far exceeding what we'll fetch, forcing pagination to hit MAX_PAGES
+      mockFetch.mock.mockImplementation(async () => {
+        return Response.json({
+          page: 1,
+          pageSize: 200,
+          totalRecords: 999999, // never satisfied — forces loop to MAX_PAGES
+          records: [{ id: 1, downloadId: "HASH", title: "Test" }],
+        });
+      });
+
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
+      const result = await client.getQueueItems();
+
+      // Should have fetched exactly MAX_PAGES (50) pages
+      assert.equal(mockFetch.mock.callCount(), 50);
+      // Should have 50 records (1 per page)
+      assert.equal(result.length, 50);
+    });
   });
 
   describe("removeAndSearch()", () => {

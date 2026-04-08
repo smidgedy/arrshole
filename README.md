@@ -61,7 +61,7 @@ All configuration is via environment variables in `.env`.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `QBIT_URL` | Yes | `http://localhost:8080` | qBittorrent Web UI URL |
+| `QBIT_URL` | Yes | | qBittorrent Web UI URL |
 | `QBIT_USERNAME` | Yes | | qBittorrent username |
 | `QBIT_PASSWORD` | Yes | | qBittorrent password |
 | `SONARR_URL` | No* | | Sonarr URL |
@@ -169,7 +169,7 @@ networkingMode=mirrored
 Install the service:
 
 ```bash
-# Check the node path in arrshole.service matches your system (default: /home/smidge/.nvm/versions/node/v25.5.0/bin/node)
+# Check that the Environment=PATH in arrshole.service includes your Node.js binary path (find it with: dirname $(which node))
 # Also check WorkingDirectory and EnvironmentFile paths
 
 sudo cp arrshole.service /etc/systemd/system/

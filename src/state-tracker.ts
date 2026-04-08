@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import type { Logger } from "./logger.js";
 import { STUCK_ELIGIBLE_STATES, METADATA_STATES } from "./types.js";
 import type { QBitTorrent, StuckTorrent, TrackedState, PersistedState, StalledThreshold } from "./types.js";
@@ -52,8 +52,8 @@ export class StateTracker {
         },
         "Loaded persisted state from disk",
       );
-    } catch (err: any) {
-      if (err?.code === "ENOENT") {
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
         this.logger?.debug("No persisted state file found — starting fresh");
       } else {
         this.logger?.warn({ err }, "Failed to read state file — starting fresh");
@@ -77,6 +77,7 @@ export class StateTracker {
       renameSync(tmpPath, this.stateFilePath);
     } catch (err) {
       this.logger?.error({ err }, "Failed to write state file");
+      try { unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
     }
   }
 

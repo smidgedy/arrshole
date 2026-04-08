@@ -31,6 +31,56 @@ function run(args: string): { stdout: string; stderr: string; exitCode: number }
   }
 }
 
+describe("Startup error handling", () => {
+  it("exits with config error when QBIT_URL is missing", () => {
+    // DOTENV_CONFIG_PATH points to nonexistent file so .env isn't loaded
+    try {
+      execSync(`node --import tsx ${CLI} --now --stalled`, {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          NODE_NO_WARNINGS: "1",
+          DOTENV_CONFIG_PATH: "/tmp/.env.nonexistent",
+        },
+      });
+      assert.fail("Should have exited with error");
+    } catch (err: any) {
+      assert.equal(err.status, 1);
+      assert.ok(
+        err.stderr.includes("QBIT_URL") || err.stderr.includes("failed to load configuration"),
+        "Should report missing QBIT_URL",
+      );
+    }
+  });
+
+  it("exits with config error when no *arr app is configured", () => {
+    try {
+      execSync(`node --import tsx ${CLI} --now --stalled`, {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          NODE_NO_WARNINGS: "1",
+          DOTENV_CONFIG_PATH: "/tmp/.env.nonexistent",
+          QBIT_URL: "http://localhost:8080",
+          QBIT_USERNAME: "admin",
+          QBIT_PASSWORD: "pass",
+        },
+      });
+      assert.fail("Should have exited with error");
+    } catch (err: any) {
+      assert.equal(err.status, 1);
+      assert.ok(
+        err.stderr.includes("arr") || err.stderr.includes("configured"),
+        "Should report missing *arr configuration",
+      );
+    }
+  });
+});
+
 describe("CLI argument parsing", () => {
   it("--help outputs usage and exits 0", () => {
     const { stdout, exitCode } = run("--help");
