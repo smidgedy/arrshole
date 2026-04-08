@@ -70,13 +70,13 @@ All configuration is via environment variables in `.env`.
 | `RADARR_API_KEY` | No* | | Radarr API key |
 | `LIDARR_URL` | No* | | Lidarr URL |
 | `LIDARR_API_KEY` | No* | | Lidarr API key |
-| `CATEGORY_MAP` | No | Auto-detected | Custom category mapping, e.g. `tv-sonarr:sonarr,movies:radarr` |
+| `CATEGORY_MAP` | No | Matches exact names: `sonarr`, `radarr`, `lidarr` | Custom category mapping, e.g. `tv-sonarr:sonarr,movies:radarr` |
 | `POLL_INTERVAL_SECONDS` | No | `60` | Poll interval (minimum 10) |
 | `METADATA_STUCK_MINUTES` | No | `10` | Minutes in metaDL before acting |
 | `STALLED_THRESHOLDS` | No | `100:24` | Progress-based stalled thresholds (see below) |
 | `MAX_ACTIONS_PER_CYCLE` | No | `5` | Max deletions per poll cycle (circuit breaker) |
 | `DRY_RUN` | No | `true` | Set to `false` to enable destructive actions |
-| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
+| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error`, `fatal` |
 | `STATE_FILE` | No | `./arrshole-state.json` | Path to persist tracking state across restarts |
 
 *At least one *arr app (URL + API key pair) must be configured.

@@ -1,10 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Logger } from "./logger.js";
+import { STUCK_ELIGIBLE_STATES, METADATA_STATES } from "./types.js";
 import type { QBitTorrent, StuckTorrent, TrackedState, PersistedState, StalledThreshold } from "./types.js";
 
-const STUCK_ELIGIBLE_STATES = new Set(["metaDL", "forcedMetaDL", "stalledDL"]);
-const METADATA_STATES = new Set(["metaDL", "forcedMetaDL"]);
-
+/**
+ * Tracks torrent stall durations across poll cycles. Persists state to disk
+ * so timers survive restarts. Returns stuck torrents that have exceeded their
+ * progress-based thresholds.
+ */
 export class StateTracker {
   private tracked = new Map<string, TrackedState>();
   private pendingDeletions = new Set<string>();
@@ -69,7 +72,7 @@ export class StateTracker {
       retryCounts: [...this.retryCount.entries()],
     };
     try {
-      writeFileSync(this.stateFilePath, JSON.stringify(data, null, 2) + "\n");
+      writeFileSync(this.stateFilePath, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
     } catch (err) {
       this.logger?.error({ err }, "Failed to write state file");
     }
@@ -88,6 +91,12 @@ export class StateTracker {
     return thresholds[thresholds.length - 1].stuckMs;
   }
 
+  /**
+   * Process a batch of torrents from qBittorrent. Tracks new stalled entries,
+   * checks existing ones against progress-tiered thresholds, prunes entries
+   * for torrents that have disappeared or recovered. Returns torrents that
+   * have exceeded their threshold, sorted longest-stalled first.
+   */
   update(
     torrents: QBitTorrent[],
     metadataStuckMs: number,
@@ -184,6 +193,7 @@ export class StateTracker {
     return stuck;
   }
 
+  /** Queue a hash for orphan deletion retry. Returns false if max retries exceeded. */
   addPendingDeletion(hash: string): boolean {
     const current = this.retryCount.get(hash) ?? 0;
     const count = current + 1;
@@ -198,12 +208,14 @@ export class StateTracker {
     return false;
   }
 
+  /** Return and clear all pending deletion hashes for retry this cycle. */
   getPendingDeletions(): string[] {
     const hashes = [...this.pendingDeletions];
     this.pendingDeletions.clear();
     return hashes;
   }
 
+  /** Remove a torrent from all tracking (tracked, pending, retry counts). */
   remove(hash: string): void {
     this.tracked.delete(hash);
     this.pendingDeletions.delete(hash);

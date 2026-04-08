@@ -3,9 +3,12 @@ import type { Config } from "./config.js";
 import type { ArrClient } from "./clients/arr-client.js";
 import type { QBitClient } from "./clients/qbittorrent.js";
 import { StateTracker } from "./state-tracker.js";
+import { STUCK_ELIGIBLE_STATES } from "./types.js";
 
-const STUCK_STATES = new Set(["metaDL", "forcedMetaDL", "stalledDL"]);
-
+/**
+ * Core polling loop. Detects stuck torrents, notifies *arr apps to blocklist
+ * and re-search, then deletes the torrent from qBittorrent.
+ */
 export class Monitor {
   private stateTracker: StateTracker;
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -24,6 +27,7 @@ export class Monitor {
     this.stateTracker = stateTracker ?? new StateTracker(logger, config.stateFilePath);
   }
 
+  /** Start the polling loop. Polls repeat on the configured interval until stop() is called. */
   start(): void {
     this.running = true;
     const loop = async () => {
@@ -43,6 +47,7 @@ export class Monitor {
     loop();
   }
 
+  /** Stop the polling loop. Waits for any in-flight poll to complete. */
   async stop(): Promise<void> {
     this.running = false;
     if (this.timeoutId) {
@@ -54,6 +59,7 @@ export class Monitor {
     }
   }
 
+  /** Execute a single poll cycle: detect stuck torrents and process up to maxActionsPerCycle. */
   async poll(): Promise<void> {
     if (this.firstCycle) {
       this.logger.info(
@@ -96,7 +102,7 @@ export class Monitor {
     );
 
     this.logger.info(
-      { torrents: torrents.length, stuck: stuckList.length },
+      { torrents: torrents.length, stuck: stuckList.length, uptimeSeconds: Math.round(process.uptime()) },
       "Poll complete",
     );
 
@@ -241,7 +247,7 @@ export class Monitor {
       this.stateTracker.remove(hash);
       return;
     }
-    if (!STUCK_STATES.has(current.state)) {
+    if (!STUCK_ELIGIBLE_STATES.has(current.state)) {
       this.logger.info(
         { torrent: name, hash, newState: current.state },
         "Torrent left stuck state after *arr notification — skipping deletion",

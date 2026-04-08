@@ -173,6 +173,78 @@ describe("QBitClient", () => {
     });
   });
 
+  describe("getTorrents() error paths", () => {
+    it("throws on non-OK response", async () => {
+      mockFetch.mock.mockImplementation(async (url) => {
+        const urlStr = typeof url === "string" ? url : url.toString();
+        if (urlStr.includes("/auth/login")) {
+          return new Response("Ok.", {
+            status: 200,
+            headers: { "Set-Cookie": "SID=sess; path=/" },
+          });
+        }
+        return new Response("Internal Server Error", { status: 500 });
+      });
+
+      const client = new QBitClient("http://localhost:8080", "admin", "pass", makeSilentLogger());
+      await client.login();
+      await assert.rejects(() => client.getTorrents(), /getTorrents failed.*500/);
+    });
+
+    it("throws on invalid JSON response", async () => {
+      mockFetch.mock.mockImplementation(async (url) => {
+        const urlStr = typeof url === "string" ? url : url.toString();
+        if (urlStr.includes("/auth/login")) {
+          return new Response("Ok.", {
+            status: 200,
+            headers: { "Set-Cookie": "SID=sess; path=/" },
+          });
+        }
+        return new Response("not json at all", { status: 200 });
+      });
+
+      const client = new QBitClient("http://localhost:8080", "admin", "pass", makeSilentLogger());
+      await client.login();
+      await assert.rejects(() => client.getTorrents(), /getTorrents returned invalid JSON/);
+    });
+  });
+
+  describe("getTorrent() error paths", () => {
+    it("throws on non-OK response", async () => {
+      mockFetch.mock.mockImplementation(async (url) => {
+        const urlStr = typeof url === "string" ? url : url.toString();
+        if (urlStr.includes("/auth/login")) {
+          return new Response("Ok.", {
+            status: 200,
+            headers: { "Set-Cookie": "SID=sess; path=/" },
+          });
+        }
+        return new Response("Internal Server Error", { status: 500 });
+      });
+
+      const client = new QBitClient("http://localhost:8080", "admin", "pass", makeSilentLogger());
+      await client.login();
+      await assert.rejects(() => client.getTorrent("abc123"), /getTorrent failed.*500/);
+    });
+
+    it("throws on invalid JSON response", async () => {
+      mockFetch.mock.mockImplementation(async (url) => {
+        const urlStr = typeof url === "string" ? url : url.toString();
+        if (urlStr.includes("/auth/login")) {
+          return new Response("Ok.", {
+            status: 200,
+            headers: { "Set-Cookie": "SID=sess; path=/" },
+          });
+        }
+        return new Response("not json at all", { status: 200 });
+      });
+
+      const client = new QBitClient("http://localhost:8080", "admin", "pass", makeSilentLogger());
+      await client.login();
+      await assert.rejects(() => client.getTorrent("abc123"), /getTorrent returned invalid JSON/);
+    });
+  });
+
   describe("deleteTorrent()", () => {
     it("sends form-encoded POST with hash and deleteFiles", async () => {
       mockFetch.mock.mockImplementation(async (url) => {
@@ -227,6 +299,23 @@ describe("QBitClient", () => {
 
       assert.equal(loginCount, 2);
       assert.equal(deleteCallCount, 2);
+    });
+
+    it("throws on non-OK response", async () => {
+      mockFetch.mock.mockImplementation(async (url) => {
+        const urlStr = typeof url === "string" ? url : url.toString();
+        if (urlStr.includes("/auth/login")) {
+          return new Response("Ok.", {
+            status: 200,
+            headers: { "Set-Cookie": "SID=sess; path=/" },
+          });
+        }
+        return new Response("Internal Server Error", { status: 500 });
+      });
+
+      const client = new QBitClient("http://localhost:8080", "admin", "pass", makeSilentLogger());
+      await client.login();
+      await assert.rejects(() => client.deleteTorrent("abc123", true), /deleteTorrent failed.*500/);
     });
   });
 });

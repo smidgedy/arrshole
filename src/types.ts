@@ -1,3 +1,9 @@
+/** qBittorrent states considered eligible for stuck detection. */
+export const STUCK_ELIGIBLE_STATES = new Set(["metaDL", "forcedMetaDL", "stalledDL"]);
+
+/** Subset of stuck-eligible states that represent metadata fetch. */
+export const METADATA_STATES = new Set(["metaDL", "forcedMetaDL"]);
+
 export interface QBitTorrent {
   hash: string;
   name: string;

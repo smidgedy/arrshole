@@ -4,6 +4,7 @@ import { drain } from "../util.js";
 
 const REQUEST_TIMEOUT = 15000;
 
+/** Client for the qBittorrent Web API (v2). Handles authentication and session renewal. */
 export class QBitClient {
   private sid: string | null = null;
 
@@ -14,6 +15,7 @@ export class QBitClient {
     private logger: Logger,
   ) {}
 
+  /** Authenticate with qBittorrent and store the session cookie. */
   async login(): Promise<void> {
     const body = new URLSearchParams({
       username: this.username,
@@ -76,6 +78,7 @@ export class QBitClient {
     return response;
   }
 
+  /** Fetch all torrents. Re-authenticates automatically on 403. */
   async getTorrents(): Promise<QBitTorrent[]> {
     const response = await this.fetchWithReauth(() =>
       fetch(`${this.url}/api/v2/torrents/info`, {
@@ -89,9 +92,14 @@ export class QBitClient {
       throw new Error(`qBittorrent getTorrents failed: HTTP ${response.status}`);
     }
 
-    return (await response.json()) as QBitTorrent[];
+    try {
+      return (await response.json()) as QBitTorrent[];
+    } catch {
+      throw new Error("qBittorrent getTorrents returned invalid JSON");
+    }
   }
 
+  /** Fetch a single torrent by hash. Returns null if not found. */
   async getTorrent(hash: string): Promise<QBitTorrent | null> {
     const params = new URLSearchParams({ hashes: hash });
     const response = await this.fetchWithReauth(() =>
@@ -106,10 +114,16 @@ export class QBitClient {
       throw new Error(`qBittorrent getTorrent failed: HTTP ${response.status}`);
     }
 
-    const torrents = (await response.json()) as QBitTorrent[];
+    let torrents: QBitTorrent[];
+    try {
+      torrents = (await response.json()) as QBitTorrent[];
+    } catch {
+      throw new Error("qBittorrent getTorrent returned invalid JSON");
+    }
     return torrents.length > 0 ? torrents[0] : null;
   }
 
+  /** Delete a torrent and optionally its downloaded files. */
   async deleteTorrent(hash: string, deleteFiles: boolean): Promise<void> {
     const body = new URLSearchParams({
       hashes: hash,

@@ -97,6 +97,26 @@ describe("ArrClient", () => {
     });
   });
 
+  describe("getQueueItems() error paths", () => {
+    it("throws on non-OK response", async () => {
+      mockFetch.mock.mockImplementation(async () => {
+        return new Response("Internal Server Error", { status: 500 });
+      });
+
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
+      await assert.rejects(() => client.getQueueItems(), /getQueueItems failed.*500/);
+    });
+
+    it("throws on invalid JSON response", async () => {
+      mockFetch.mock.mockImplementation(async () => {
+        return new Response("not json at all", { status: 200 });
+      });
+
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
+      await assert.rejects(() => client.getQueueItems(), /getQueueItems returned invalid JSON/);
+    });
+  });
+
   describe("removeAndSearch()", () => {
     it("sends DELETE with correct query params", async () => {
       mockFetch.mock.mockImplementation(async () => {
@@ -114,6 +134,15 @@ describe("ArrClient", () => {
       assert.ok(urlStr.includes("blocklist=true"));
       assert.ok(urlStr.includes("skipRedownload=false"));
       assert.equal(init?.method, "DELETE");
+    });
+
+    it("throws on non-OK response", async () => {
+      mockFetch.mock.mockImplementation(async () => {
+        return new Response("Internal Server Error", { status: 500 });
+      });
+
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
+      await assert.rejects(() => client.removeAndSearch(42), /removeAndSearch failed.*500/);
     });
   });
 
@@ -144,6 +173,45 @@ describe("ArrClient", () => {
       assert.equal(calls.length, 2);
       assert.ok(calls[0].includes("/history?downloadId=ABC123&eventType=1"));
       assert.ok(calls[1].includes("/history/failed/99"));
+    });
+
+    it("throws on non-OK history response", async () => {
+      mockFetch.mock.mockImplementation(async () => {
+        return new Response("Internal Server Error", { status: 500 });
+      });
+
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
+      await assert.rejects(() => client.markFailed("abc123"), /history lookup failed.*500/);
+    });
+
+    it("throws on non-OK failed POST response", async () => {
+      mockFetch.mock.mockImplementation(async (url) => {
+        const urlStr = typeof url === "string" ? url : url.toString();
+        if (urlStr.includes("/history?")) {
+          return new Response(
+            JSON.stringify({
+              page: 1,
+              pageSize: 10,
+              totalRecords: 1,
+              records: [{ id: 99 }],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response("Internal Server Error", { status: 500 });
+      });
+
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
+      await assert.rejects(() => client.markFailed("abc123"), /markFailed failed.*500/);
+    });
+
+    it("throws on invalid JSON from history endpoint", async () => {
+      mockFetch.mock.mockImplementation(async () => {
+        return new Response("not json at all", { status: 200 });
+      });
+
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "test-key", "v3", makeSilentLogger());
+      await assert.rejects(() => client.markFailed("abc123"), /history lookup returned invalid JSON/);
     });
 
     it("throws when no history record found", async () => {

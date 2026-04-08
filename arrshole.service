@@ -24,6 +24,18 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/smidge/development/arrshole
 PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
 
 [Install]
 WantedBy=multi-user.target

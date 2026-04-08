@@ -69,9 +69,10 @@ const above = parsePercent(cli.above, "--above");
 try {
   const mode = statSync(".env").mode & 0o777;
   if (mode & 0o044) {
-    console.warn(
-      `WARNING: .env is readable by group/others (mode 0o${mode.toString(8)}). Run: chmod 600 .env`,
+    console.error(
+      `FATAL: .env is readable by group/others (mode 0o${mode.toString(8)}). Run: chmod 600 .env`,
     );
+    process.exit(1);
   }
 } catch {
   /* .env may not exist when using EnvironmentFile */
