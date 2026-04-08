@@ -98,6 +98,35 @@ The default `100:24` applies a flat 24-hour threshold to all stalled torrents re
 
 arrshole tracks when it first observes each torrent in a stalled state. This tracking is persisted to disk (at `STATE_FILE`, default `./arrshole-state.json`) so that stall timers survive service restarts. If a torrent resumes downloading, its timer is cleared. On startup, arrshole logs how many tracked entries were restored and how long ago the state was saved.
 
+## One-shot mode
+
+Use CLI switches to immediately prune matching torrents without waiting for threshold timers. This is useful for manually clearing out a backlog of stuck torrents.
+
+```bash
+# Prune all stalled and metaDL torrents immediately
+node dist/index.js --now --stalled --metadl
+
+# Prune stalled torrents that have barely started (<10% complete)
+node dist/index.js --now --stalled --below 10
+
+# Prune stalled torrents that are nearly done (>90% complete)
+node dist/index.js --now --stalled --above 90
+
+# Combine filters: stalled torrents between 10% and 50%
+node dist/index.js --now --stalled --above 10 --below 50
+```
+
+| Flag | Description |
+|---|---|
+| `--now` | Run once and exit (required for one-shot mode) |
+| `--stalled` | Include `stalledDL` torrents |
+| `--metadl` | Include `metaDL`/`forcedMetaDL` torrents |
+| `--below <pct>` | Only torrents below this completion % (exclusive) |
+| `--above <pct>` | Only torrents above this completion % (exclusive) |
+| `--help` | Show usage information |
+
+One-shot mode bypasses the circuit breaker and threshold timers — every matching torrent is processed in a single pass. The `DRY_RUN` env var still applies, so you can preview what would happen with `DRY_RUN=true`.
+
 ## Dry run vs live
 
 `DRY_RUN=true` is the default. In this mode arrshole detects stuck torrents and logs exactly what it would do, but makes no changes. Run it like this first and check the logs to make sure it's identifying the right torrents:
