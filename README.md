@@ -238,6 +238,22 @@ pm2 save
 pm2-startup install
 ```
 
+## Known limitations and design choices
+
+The following are deliberate trade-offs, not bugs. They've been reviewed and accepted as appropriate for this project's scope and deployment context.
+
+**HTTP is supported (not just HTTPS).** qBittorrent, Sonarr, Radarr, and Lidarr are typically deployed on a home LAN and accessed via HTTP. Requiring HTTPS would force users to set up TLS certificates for local services that don't ship with them. If you're exposing these services over the internet, you should be using a reverse proxy with TLS anyway — that's outside the scope of this tool.
+
+**API responses are not validated at runtime.** JSON responses from qBittorrent and *arr APIs are cast to TypeScript interfaces without runtime schema validation (e.g., zod). These are trusted internal services with stable, documented APIs — not user input. Adding runtime validation would increase complexity and dependencies for no practical benefit in this context.
+
+**`parseInt` accepts trailing non-numeric characters.** `parseInt("10abc", 10)` returns `10` in JavaScript. The `parseIntStrict` helper validates the result is finite and above a minimum, but doesn't reject trailing garbage. Since all numeric config comes from `.env` files written by the operator (not user input), this is a non-issue in practice.
+
+**`drain()` cancels the stream rather than consuming it.** The `drain()` utility calls `response.body?.cancel()` to release resources on error paths. Strictly, "drain" implies reading to completion, but cancelling is more efficient and achieves the same goal (freeing the connection). The function works correctly for all call sites.
+
+**`DRY_RUN` only disables on the exact string `"false"`.** Any other value — including `"0"`, `"no"`, `"off"`, or unset — enables dry-run mode. This is intentional: for a daemon that deletes torrents and modifies *arr queues, the safe default is to do nothing. You have to explicitly opt in to destructive behaviour.
+
+**Test mocks use `as any` casts.** Test files contain ~30 `as any` assertions to create partial mock objects. This is a pragmatic choice — fully typing mock objects that only need 2-3 methods would add significant boilerplate for no test quality benefit. Production code has zero `any` usage.
+
 ## Credits
 
 This project was written entirely by [Claude Code](https://claude.ai/code) (Anthropic's AI coding agent), including the plan, implementation, tests, and this README.
