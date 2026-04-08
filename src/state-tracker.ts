@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import type { Logger } from "./logger.js";
 import { STUCK_ELIGIBLE_STATES, METADATA_STATES } from "./types.js";
 import type { QBitTorrent, StuckTorrent, TrackedState, PersistedState, StalledThreshold } from "./types.js";
@@ -71,8 +71,10 @@ export class StateTracker {
       pendingDeletions: [...this.pendingDeletions],
       retryCounts: [...this.retryCount.entries()],
     };
+    const tmpPath = this.stateFilePath + ".tmp";
     try {
-      writeFileSync(this.stateFilePath, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+      writeFileSync(tmpPath, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+      renameSync(tmpPath, this.stateFilePath);
     } catch (err) {
       this.logger?.error({ err }, "Failed to write state file");
     }

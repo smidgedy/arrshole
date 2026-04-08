@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "node --import tsx --test 'src/**/*.test.ts'",
-    "test:coverage": "c8 --include 'src/**/*.ts' --exclude 'src/**/*.test.ts' node --import tsx --test 'src/**/*.test.ts'"
+    "test:coverage": "c8 --include 'src/**/*.ts' --exclude 'src/**/*.test.ts' node --import tsx --test 'src/**/*.test.ts'",
+    "audit": "npm audit --audit-level=moderate"
   },
   "dependencies": {
     "dotenv": "^16.0.0",

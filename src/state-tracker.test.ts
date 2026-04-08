@@ -88,6 +88,20 @@ describe("StateTracker", () => {
       assert.equal(result.length, 0);
     });
 
+    it("handles forcedMetaDL identically to metaDL", () => {
+      const tracker = new StateTracker(undefined, undefined, () => 1000000);
+
+      const result = tracker.update(
+        [makeTorrent({ state: "forcedMetaDL", time_active: 15 * 60 })],
+        TEN_MINUTES,
+        FLAT_THRESHOLDS,
+      );
+
+      assert.equal(result.length, 1);
+      assert.equal(result[0].state, "forcedMetaDL");
+      assert.ok(result[0].stuckDurationMs >= TEN_MINUTES);
+    });
+
     it("does not flag metaDL that recovers to downloading", () => {
       const tracker = new StateTracker(undefined, undefined, () => 1000000);
 
