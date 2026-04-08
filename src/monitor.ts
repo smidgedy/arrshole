@@ -131,6 +131,44 @@ export class Monitor {
     }
   }
 
+  /**
+   * One-shot mode: fetch all torrents, filter by the given states and progress
+   * bounds, process every match (no circuit breaker), then return.
+   */
+  async runOnce(
+    states: Set<string>,
+    below?: number,
+    above?: number,
+  ): Promise<void> {
+    const torrents = await this.qbit.getTorrents();
+
+    const matches = torrents.filter((t) => {
+      if (!states.has(t.state)) return false;
+      const pct = t.progress * 100;
+      if (below !== undefined && pct >= below) return false;
+      if (above !== undefined && pct <= above) return false;
+      return true;
+    });
+
+    this.logger.info(
+      { torrents: torrents.length, matched: matches.length, states: [...states], below, above },
+      "One-shot run",
+    );
+
+    if (matches.length === 0) return;
+
+    for (const t of matches) {
+      try {
+        await this.processStuckTorrent(t.hash, t.name, t.state, t.category);
+      } catch (err) {
+        this.logger.error(
+          { torrent: t.name, hash: t.hash, err },
+          "Failed to process torrent in one-shot mode",
+        );
+      }
+    }
+  }
+
   private async processStuckTorrent(
     hash: string,
     name: string,
