@@ -110,6 +110,23 @@ export class Monitor {
       return;
     }
 
+    // Step 3b: Filter out torrents with no mapped *arr app (don't waste circuit breaker slots)
+    stuckList = stuckList.filter((t) => {
+      const appName = this.categoryMap.get(t.category.toLowerCase());
+      if (!appName || !this.arrClients.has(appName)) {
+        this.logger.warn(
+          { torrent: t.name, category: t.category },
+          "No *arr app mapped for category — skipping",
+        );
+        return false;
+      }
+      return true;
+    });
+
+    if (stuckList.length === 0) {
+      return;
+    }
+
     // Step 4: Apply circuit breaker
     if (stuckList.length > this.config.maxActionsPerCycle) {
       this.logger.warn(
@@ -126,6 +143,16 @@ export class Monitor {
 
     // Step 5: Process each stuck torrent
     for (const stuck of stuckList) {
+      this.logger.info(
+        {
+          torrent: stuck.name,
+          hash: stuck.hash,
+          state: stuck.state,
+          category: stuck.category,
+          stuckHours: +(stuck.stuckDurationMs / 3600000).toFixed(2),
+        },
+        "Stuck torrent detected — processing",
+      );
       try {
         await this.processStuckTorrent(stuck.hash, stuck.name, stuck.state, stuck.category);
       } catch (err) {
@@ -164,6 +191,16 @@ export class Monitor {
     if (matches.length === 0) return;
 
     for (const t of matches) {
+      this.logger.info(
+        {
+          torrent: t.name,
+          hash: t.hash,
+          state: t.state,
+          category: t.category,
+          progress: +(t.progress * 100).toFixed(1) + "%",
+        },
+        "One-shot: processing torrent",
+      );
       try {
         await this.processStuckTorrent(t.hash, t.name, t.state, t.category);
       } catch (err) {
