@@ -29,6 +29,7 @@ export class Monitor {
 
   /** Start the polling loop. Polls repeat on the configured interval until stop() is called. */
   start(): void {
+    if (this.running) return;
     this.running = true;
     const loop = async () => {
       if (!this.running) return;
