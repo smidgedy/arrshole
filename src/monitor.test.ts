@@ -116,12 +116,13 @@ describe("Monitor", () => {
     assert.equal(mockQbit.deleteTorrent.mock.calls[0].arguments[1], true);
   });
 
-  it("arr failure prevents qBit deletion", async () => {
+  it("arr failure does not prevent qBit deletion (best-effort notify)", async () => {
     const torrent = makeStuckMetaDL();
     const mockQbit = createMockQbit();
     const mockArr = createMockArr();
 
     mockQbit.getTorrents.mock.mockImplementation(async () => [torrent]);
+    mockQbit.getTorrent.mock.mockImplementation(async () => torrent);
     mockArr.getQueueItems.mock.mockImplementation(async () => [makeQueueRecord()]);
     mockArr.removeAndSearch.mock.mockImplementation(async () => {
       throw new Error("Sonarr is down");
@@ -133,9 +134,8 @@ describe("Monitor", () => {
 
     await monitor.poll();
 
-    assert.equal(mockArr.removeAndSearch.mock.callCount(), 1);
-    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0); // NOT called
-    assert.equal(mockQbit.getTorrent.mock.callCount(), 0); // NOT called
+    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 1); // qBit delete still happens
+    assert.equal(mockArr.removeAndSearch.mock.callCount(), 1); // arr notify attempted
   });
 
   it("dry run mode: no mutations called", async () => {
@@ -194,7 +194,7 @@ describe("Monitor", () => {
     assert.equal(mockQbit.deleteTorrent.mock.callCount(), 1);
   });
 
-  it("re-verify finds resumed torrent: deletion skipped", async () => {
+  it("re-verify finds resumed torrent: skips qBit delete and arr notify", async () => {
     const torrent = makeStuckMetaDL();
     const mockQbit = createMockQbit();
     const mockArr = createMockArr();
@@ -212,8 +212,8 @@ describe("Monitor", () => {
 
     await monitor.poll();
 
-    assert.equal(mockArr.removeAndSearch.mock.callCount(), 1); // arr was notified
-    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0); // but qBit delete skipped
+    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
+    assert.equal(mockArr.removeAndSearch.mock.callCount(), 0);
   });
 
   it("circuit breaker limits processing", async () => {
@@ -258,10 +258,10 @@ describe("Monitor", () => {
     const arrClients = new Map([["sonarr", mockArr as any]]);
     const monitor = new Monitor(mockQbit as any, arrClients, config.categoryMap, config, makeSilentLogger(), new StateTracker());
 
-    await monitor.poll(); // process — arr succeeds, qBit fails
+    await monitor.poll(); // process — qBit delete fails, arr notify never attempted
 
-    assert.equal(mockArr.removeAndSearch.mock.callCount(), 1);
     assert.equal(mockQbit.deleteTorrent.mock.callCount(), 1); // attempted
+    assert.equal(mockArr.removeAndSearch.mock.callCount(), 0); // bailed before notify
 
     // Next poll: torrent gone from qBit, but pending deletion should retry
     mockQbit.getTorrents.mock.mockImplementation(async () => []);

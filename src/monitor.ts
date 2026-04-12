@@ -248,37 +248,14 @@ export class Monitor {
           category,
           app: arrClient.name,
         },
-        "[DRY RUN] Would remove from *arr queue, blocklist, and delete from qBittorrent",
+        "[DRY RUN] Would delete from qBittorrent and notify *arr to blocklist + re-search",
       );
       this.stateTracker.remove(hash);
       return;
     }
 
-    // Find in *arr queue
-    const queueItems = await arrClient.getQueueItems();
-    const match = queueItems.find((q) => q.downloadId === hash.toUpperCase());
-
-    // Notify *arr
-    if (match) {
-      await arrClient.removeAndSearch(match.id);
-      this.logger.warn(
-        { action: "arr_notified", app: arrClient.name, torrent: name, method: "queue_remove", queueId: match.id },
-        `Notified ${arrClient.name} to remove, blocklist, and search for alternative`,
-      );
-    } else {
-      // markFailed auto-blocklists via DownloadFailedEvent → BlocklistService in the *arr
-      await arrClient.markFailed(hash);
-      this.logger.warn(
-        { action: "arr_notified", app: arrClient.name, torrent: name, method: "history_fallback" },
-        `Used history fallback to mark failed in ${arrClient.name}`,
-      );
-    }
-
-    // Re-verify torrent state before deletion.
-    // Conservative approach: only proceed with deletion if the torrent is still in a
-    // known stuck state. If it transitioned to any other state (even ambiguous ones
-    // like pausedDL/checkingDL), skip deletion. The *arr has already been notified,
-    // and the torrent will be re-detected on the next cycle if it returns to stuck.
+    // Re-verify torrent is still stuck. If it recovered (or is in an ambiguous
+    // state like pausedDL/checkingDL), skip this cycle and let it be re-detected.
     const current = await this.qbit.getTorrent(hash);
     if (!current) {
       this.logger.info({ torrent: name, hash }, "Torrent already gone from qBittorrent");
@@ -288,28 +265,58 @@ export class Monitor {
     if (!STUCK_ELIGIBLE_STATES.has(current.state)) {
       this.logger.info(
         { torrent: name, hash, newState: current.state },
-        "Torrent left stuck state after *arr notification — skipping deletion",
+        "Torrent left stuck state — skipping",
       );
       this.stateTracker.remove(hash);
       return;
     }
 
-    // Delete from qBit
+    // Step 1: delete from qBit. This is the action that always needs to happen —
+    // freeing the slot is the whole point. If it fails, queue for retry and bail.
     try {
       await this.qbit.deleteTorrent(hash, true);
       this.logger.warn(
         { action: "qbit_deleted", torrent: name, hash },
         "Deleted torrent and files from qBittorrent",
       );
-      this.stateTracker.remove(hash);
     } catch (err) {
       this.logger.error(
         { torrent: name, hash, err },
-        "qBit delete failed after *arr notification — will retry next cycle",
+        "qBit delete failed — will retry next cycle",
       );
       if (!this.stateTracker.addPendingDeletion(hash)) {
         this.logger.warn({ torrent: name, hash }, "Gave up retrying deletion after max retries");
       }
+      return;
     }
+
+    // Step 2: best-effort notify *arr to blocklist + re-search. Any failure here
+    // is logged and swallowed — the torrent is already gone from qBit, so we
+    // don't want to keep retrying. Worst case the *arr won't blocklist this
+    // release and may re-grab it; the next stuck cycle will catch that too.
+    try {
+      const queueItems = await arrClient.getQueueItems();
+      const match = queueItems.find((q) => q.downloadId === hash.toUpperCase());
+      if (match) {
+        await arrClient.removeAndSearch(match.id);
+        this.logger.warn(
+          { action: "arr_notified", app: arrClient.name, torrent: name, method: "queue_remove", queueId: match.id },
+          `Notified ${arrClient.name} to blocklist and search for alternative`,
+        );
+      } else {
+        await arrClient.markFailed(hash);
+        this.logger.warn(
+          { action: "arr_notified", app: arrClient.name, torrent: name, method: "history_fallback" },
+          `Used history fallback to mark failed in ${arrClient.name}`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        { torrent: name, hash, app: arrClient.name, err },
+        "Best-effort *arr notification failed — torrent already deleted from qBit",
+      );
+    }
+
+    this.stateTracker.remove(hash);
   }
 }
