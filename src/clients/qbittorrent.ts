@@ -4,9 +4,13 @@ import { drain } from "../util.js";
 
 const REQUEST_TIMEOUT = 15000;
 
+// qBittorrent's session cookie. Older builds use `SID=...`; newer builds (≥4.6)
+// use `QBT_SID_<port>=...`. Match either to stay compatible.
+const SID_COOKIE_RE = /(?:^|;\s*)((?:QBT_)?SID(?:_\d+)?)=([^;]+)/;
+
 /** Client for the qBittorrent Web API (v2). Handles authentication and session renewal. */
 export class QBitClient {
-  private sid: string | null = null;
+  private sidCookie: string | null = null;
 
   constructor(
     private url: string,
@@ -36,11 +40,11 @@ export class QBitClient {
 
     const setCookie = response.headers.get("set-cookie");
     if (setCookie) {
-      const match = setCookie.match(/SID=([^;]+)/);
+      const match = setCookie.match(SID_COOKIE_RE);
       if (match) {
-        this.sid = match[1];
+        this.sidCookie = `${match[1]}=${match[2]}`;
         await drain(response);
-        this.logger.debug("qBittorrent authenticated");
+        this.logger.debug({ cookieName: match[1] }, "qBittorrent authenticated");
         return;
       }
     }
@@ -56,7 +60,7 @@ export class QBitClient {
   }
 
   private get cookieHeader(): string {
-    return this.sid ? `SID=${this.sid}` : "";
+    return this.sidCookie ?? "";
   }
 
   private async fetchWithReauth(

@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { statSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { loadConfig } from "./config.js";
+import { loadConfig, type Config } from "./config.js";
 import { createLogger } from "./logger.js";
 import { QBitClient } from "./clients/qbittorrent.js";
 import { ArrClient } from "./clients/arr-client.js";
@@ -78,7 +78,7 @@ try {
   /* .env may not exist when using EnvironmentFile */
 }
 
-let config;
+let config: Config;
 try {
   config = loadConfig();
 } catch (err) {
@@ -111,14 +111,41 @@ const qbit = new QBitClient(
   logger,
 );
 
-try {
-  await qbit.login();
-} catch (err) {
-  logger.fatal(
-    { err, qbitUrl: config.qbit.url },
-    "Failed to connect to qBittorrent — is it running and reachable?",
-  );
-  process.exit(1);
+async function loginWithBackoff(): Promise<void> {
+  const baseMs = 5_000;
+  const maxMs = 300_000;
+  let attempt = 0;
+  for (;;) {
+    try {
+      await qbit.login();
+      return;
+    } catch (err) {
+      attempt++;
+      const delay = Math.min(baseMs * 2 ** Math.min(attempt - 1, 6), maxMs);
+      logger.warn(
+        { err, qbitUrl: config.qbit.url, attempt, retryInMs: delay },
+        "qBittorrent unreachable at startup — retrying",
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+if (cli.now) {
+  // One-shot: fail fast so scripts/cron don't hang on a sick qBit.
+  try {
+    await qbit.login();
+  } catch (err) {
+    logger.fatal(
+      { err, qbitUrl: config.qbit.url },
+      "Failed to connect to qBittorrent — is it running and reachable?",
+    );
+    process.exit(1);
+  }
+} else {
+  // Daemon: retry forever. The poll loop already tolerates transient failures,
+  // so we should never exit just because qBit is briefly down.
+  await loginWithBackoff();
 }
 logger.info("qBittorrent authenticated");
 
