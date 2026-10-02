@@ -56,8 +56,8 @@ size_weight = 0.6
 min_p_delete = 0.35
 min_size_gb_movies = 4
 min_size_gb_series = 10
-junk_movies = 10   # how many items carry `junk` at once, per app
-junk_series = 10
+junk_movies = 100  # how many items carry `junk` at once, per app
+junk_series = 100
 hysteresis = 0.10  # an existing junk tag is only withdrawn once P(delete) < min_p_delete - hysteresis
 
 [watch]

@@ -216,7 +216,7 @@ export function loadConfig(): Config {
         intervalMs: parseIntStrict(process.env.TASTE_INTERVAL_HOURS || "24", "TASTE_INTERVAL_HOURS", 1) * 3600_000,
         retryMs: 3600_000,
         timeoutMs: parseIntStrict(process.env.TASTE_TIMEOUT_MINUTES || "30", "TASTE_TIMEOUT_MINUTES", 1) * 60_000,
-        maxTagChanges: parseIntStrict(process.env.TASTE_MAX_TAG_CHANGES || "40", "TASTE_MAX_TAG_CHANGES", 1),
+        maxTagChanges: parseIntStrict(process.env.TASTE_MAX_TAG_CHANGES || "250", "TASTE_MAX_TAG_CHANGES", 1),
         stateFilePath: process.env.TASTE_STATE_FILE || "./taste-data/arrshole-taste.json",
       }
     : null;

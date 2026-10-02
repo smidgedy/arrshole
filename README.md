@@ -82,7 +82,7 @@ All configuration is via environment variables in `.env`.
 | `TASTE` | No | `false` | Set to `true` to enable the junk tagger (see below) |
 | `TASTE_INTERVAL_HOURS` | No | `24` | How often the taste model runs |
 | `TASTE_TIMEOUT_MINUTES` | No | `30` | Kill the model run if it takes longer |
-| `TASTE_MAX_TAG_CHANGES` | No | `40` | Max tag adds + removes per run (circuit breaker) |
+| `TASTE_MAX_TAG_CHANGES` | No | `250` | Max tag adds + removes per run (circuit breaker) |
 | `TASTE_DIR` / `TASTE_PYTHON` | No | `./taste` / `.venv/bin/python` | Where the model package and its interpreter live |
 | `TASTE_STATE_FILE` | No | `./taste-data/arrshole-taste.json` | Last-run bookkeeping |
 | `PLEX_TOKEN` | No | — | Lets the model read your plex.tv watch history |
