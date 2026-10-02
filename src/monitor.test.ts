@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Monitor } from "./monitor.js";
 import { StateTracker } from "./state-tracker.js";
 import type { Config } from "./config.js";
-import type { QBitTorrent, ArrQueueRecord } from "./types.js";
+import type { QBitTorrent, ArrQueueRecord, ArrRejectRecord } from "./types.js";
 import { makeSilentLogger } from "./test-helpers.js";
 
 const TEN_MINUTES = 10 * 60 * 1000;
@@ -20,6 +20,10 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     metadataStuckMs: TEN_MINUTES,
     stalledThresholds: [{ maxProgress: 100, stuckMs: TWENTY_FOUR_HOURS }],
     maxActionsPerCycle: 5,
+    outageGuardEnabled: false,
+    outageSpeedFloorBytes: 1024,
+    outageMinActiveDownloading: 3,
+    importRejectEnabled: false,
     dryRun: true,
     logLevel: "silent",
     stateFilePath: "",
@@ -61,6 +65,7 @@ function createMockQbit() {
   return {
     getTorrents: mock.fn(async (): Promise<QBitTorrent[]> => []),
     getTorrent: mock.fn(async (): Promise<QBitTorrent | null> => null),
+    getTransferInfo: mock.fn(async () => ({ dl_info_speed: 5_000_000, up_info_speed: 0 })),
     deleteTorrent: mock.fn(async (): Promise<void> => {}),
     login: mock.fn(async (): Promise<void> => {}),
   };
@@ -70,8 +75,23 @@ function createMockArr(name = "Sonarr") {
   return {
     name,
     getQueueItems: mock.fn(async (): Promise<ArrQueueRecord[]> => []),
+    getRejectRecords: mock.fn(async (): Promise<ArrRejectRecord[]> => []),
     removeAndSearch: mock.fn(async (): Promise<void> => {}),
+    removeRejected: mock.fn(async (): Promise<void> => {}),
     markFailed: mock.fn(async (): Promise<void> => {}),
+  };
+}
+
+function makeRejectRecord(overrides: Partial<ArrRejectRecord> = {}): ArrRejectRecord {
+  return {
+    id: 7,
+    downloadId: "DEADBEEF",
+    title: "Some Release",
+    trackedDownloadState: "importFailed",
+    trackedDownloadStatus: "warning",
+    downloadComplete: true,
+    messages: ["One or more tracks expected in this release were not imported or missing from the release"],
+    ...overrides,
   };
 }
 
@@ -584,5 +604,209 @@ describe("Monitor.runOnce", () => {
     assert.equal(mockArr.markFailed.mock.callCount(), 0);
     assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
     assert.equal(mockQbit.getTorrent.mock.callCount(), 0);
+  });
+
+  describe("outage guard", () => {
+    // One stuck metaDL torrent plus two healthy downloading torrents → 3 active.
+    function outageScenario() {
+      const stuck = makeStuckMetaDL({ hash: "stuck1", category: "sonarr" });
+      const active = [
+        makeTorrent({ hash: "dl1", state: "downloading", time_active: 30, category: "sonarr" }),
+        makeTorrent({ hash: "dl2", state: "downloading", time_active: 30, category: "sonarr" }),
+      ];
+      const mockQbit = createMockQbit();
+      const mockArr = createMockArr();
+      mockQbit.getTorrents.mock.mockImplementation(async () => [stuck, ...active]);
+      mockQbit.getTorrent.mock.mockImplementation(async () => stuck);
+      mockArr.getQueueItems.mock.mockImplementation(async () => [makeQueueRecord({ downloadId: "STUCK1" })]);
+      return { mockQbit, mockArr };
+    }
+
+    it("skips all actions when download rate is near zero with active torrents", async () => {
+      const { mockQbit, mockArr } = outageScenario();
+      mockQbit.getTransferInfo.mock.mockImplementation(async () => ({ dl_info_speed: 0, up_info_speed: 0 }));
+
+      const config = makeConfig({ dryRun: false, outageGuardEnabled: true });
+      const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+      await monitor.poll();
+      assert.equal(mockQbit.getTransferInfo.mock.callCount(), 1);
+      assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
+      assert.equal(mockArr.removeAndSearch.mock.callCount(), 0);
+    });
+
+    it("acts normally when the client is downloading at speed", async () => {
+      const { mockQbit, mockArr } = outageScenario();
+      mockQbit.getTransferInfo.mock.mockImplementation(async () => ({ dl_info_speed: 5_000_000, up_info_speed: 0 }));
+
+      const config = makeConfig({ dryRun: false, outageGuardEnabled: true });
+      const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+      await monitor.poll();
+      assert.equal(mockQbit.deleteTorrent.mock.callCount(), 1);
+      assert.equal(mockArr.removeAndSearch.mock.callCount(), 1);
+    });
+
+    it("does not engage when too few torrents are actively downloading", async () => {
+      // Only the single stuck metaDL torrent is active (1 < minActive of 3),
+      // so a quiet client at 0 B/s is not mistaken for an outage.
+      const stuck = makeStuckMetaDL({ hash: "stuck1", category: "sonarr" });
+      const mockQbit = createMockQbit();
+      const mockArr = createMockArr();
+      mockQbit.getTorrents.mock.mockImplementation(async () => [stuck]);
+      mockQbit.getTorrent.mock.mockImplementation(async () => stuck);
+      mockArr.getQueueItems.mock.mockImplementation(async () => [makeQueueRecord({ downloadId: "STUCK1" })]);
+      mockQbit.getTransferInfo.mock.mockImplementation(async () => ({ dl_info_speed: 0, up_info_speed: 0 }));
+
+      const config = makeConfig({ dryRun: false, outageGuardEnabled: true });
+      const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+      await monitor.poll();
+      assert.equal(mockQbit.getTransferInfo.mock.callCount(), 0); // never queried
+      assert.equal(mockQbit.deleteTorrent.mock.callCount(), 1);
+    });
+
+    it("fails safe and skips actions when transfer info cannot be read", async () => {
+      const { mockQbit, mockArr } = outageScenario();
+      mockQbit.getTransferInfo.mock.mockImplementation(async () => {
+        throw new Error("connection refused");
+      });
+
+      const config = makeConfig({ dryRun: false, outageGuardEnabled: true });
+      const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+      await monitor.poll();
+      assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
+    });
+  });
+});
+
+describe("Monitor.scanImportRejects", () => {
+  it("reaps a defective reject with re-search (redownload=true)", async () => {
+    const mockQbit = createMockQbit();
+    const mockArr = createMockArr();
+    mockArr.getRejectRecords.mock.mockImplementation(async () => [
+      makeRejectRecord({ id: 11, trackedDownloadState: "importFailed" }),
+    ]);
+
+    const config = makeConfig({ dryRun: false });
+    const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+    await monitor.scanImportRejects();
+
+    assert.equal(mockArr.removeRejected.mock.callCount(), 1);
+    assert.equal(mockArr.removeRejected.mock.calls[0].arguments[0], 11);
+    assert.equal(mockArr.removeRejected.mock.calls[0].arguments[1], true); // re-search
+    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0); // *arr does the delete
+  });
+
+  it("reaps a redundant reject without re-search (redownload=false)", async () => {
+    const mockQbit = createMockQbit();
+    const mockArr = createMockArr();
+    mockArr.getRejectRecords.mock.mockImplementation(async () => [
+      makeRejectRecord({
+        id: 22,
+        trackedDownloadState: "importBlocked",
+        messages: ["Not an upgrade for existing episode file(s). Existing quality: WEBDL-1080p"],
+      }),
+    ]);
+
+    const config = makeConfig({ dryRun: false });
+    const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+    await monitor.scanImportRejects();
+
+    assert.equal(mockArr.removeRejected.mock.callCount(), 1);
+    assert.equal(mockArr.removeRejected.mock.calls[0].arguments[1], false); // no re-search
+  });
+
+  it("skips items whose download is still in progress", async () => {
+    const mockQbit = createMockQbit();
+    const mockArr = createMockArr();
+    mockArr.getRejectRecords.mock.mockImplementation(async () => [
+      makeRejectRecord({ trackedDownloadState: "importPending", downloadComplete: false }),
+    ]);
+
+    const config = makeConfig({ dryRun: false });
+    const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+    await monitor.scanImportRejects();
+
+    assert.equal(mockArr.removeRejected.mock.callCount(), 0);
+  });
+
+  it("dry run: classifies but performs no mutations", async () => {
+    const mockQbit = createMockQbit();
+    const mockArr = createMockArr();
+    mockArr.getRejectRecords.mock.mockImplementation(async () => [makeRejectRecord()]);
+
+    const config = makeConfig({ dryRun: true });
+    const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+    await monitor.scanImportRejects();
+
+    assert.equal(mockArr.removeRejected.mock.callCount(), 0);
+  });
+
+  it("circuit breaker limits actions per pass", async () => {
+    const mockQbit = createMockQbit();
+    const mockArr = createMockArr();
+    mockArr.getRejectRecords.mock.mockImplementation(async () =>
+      Array.from({ length: 10 }, (_, i) => makeRejectRecord({ id: i, downloadId: `H${i}` })),
+    );
+
+    const config = makeConfig({ dryRun: false });
+    const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+    await monitor.scanImportRejects(3);
+
+    assert.equal(mockArr.removeRejected.mock.callCount(), 3);
+  });
+
+  it("one *arr failing does not stop others", async () => {
+    const mockQbit = createMockQbit();
+    const bad = createMockArr("Sonarr");
+    const good = createMockArr("Lidarr");
+    bad.getRejectRecords.mock.mockImplementation(async () => { throw new Error("Sonarr down"); });
+    good.getRejectRecords.mock.mockImplementation(async () => [makeRejectRecord()]);
+
+    const config = makeConfig({ dryRun: false });
+    const monitor = new Monitor(
+      mockQbit as any,
+      new Map([["sonarr", bad as any], ["lidarr", good as any]]),
+      config.categoryMap, config, makeSilentLogger(), new StateTracker(),
+    );
+
+    await monitor.scanImportRejects();
+
+    assert.equal(good.removeRejected.mock.callCount(), 1);
+  });
+
+  it("poll() does not scan rejects when the feature is disabled", async () => {
+    const mockQbit = createMockQbit();
+    const mockArr = createMockArr();
+    mockQbit.getTorrents.mock.mockImplementation(async () => []);
+
+    const config = makeConfig({ dryRun: false, importRejectEnabled: false });
+    const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+    await monitor.poll();
+
+    assert.equal(mockArr.getRejectRecords.mock.callCount(), 0);
+  });
+
+  it("poll() scans rejects when the feature is enabled", async () => {
+    const mockQbit = createMockQbit();
+    const mockArr = createMockArr();
+    mockQbit.getTorrents.mock.mockImplementation(async () => []);
+    mockArr.getRejectRecords.mock.mockImplementation(async () => [makeRejectRecord()]);
+
+    const config = makeConfig({ dryRun: false, importRejectEnabled: true });
+    const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+    await monitor.poll();
+
+    assert.equal(mockArr.getRejectRecords.mock.callCount(), 1);
+    assert.equal(mockArr.removeRejected.mock.callCount(), 1);
   });
 });

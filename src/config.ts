@@ -18,6 +18,10 @@ export interface Config {
   metadataStuckMs: number;
   stalledThresholds: StalledThresholdConfig[];
   maxActionsPerCycle: number;
+  outageGuardEnabled: boolean;
+  outageSpeedFloorBytes: number;
+  outageMinActiveDownloading: number;
+  importRejectEnabled: boolean;
   dryRun: boolean;
   logLevel: string;
   stateFilePath: string;
@@ -170,6 +174,23 @@ export function loadConfig(): Config {
     process.env.STALLED_THRESHOLDS || "100:24",
   );
 
+  // Outage guard: when qBittorrent's global download rate is at/below the floor
+  // while many torrents are trying to download, treat it as a client-wide outage
+  // and skip all actions that cycle (auto-resumes when speed recovers).
+  const outageGuardEnabled = process.env.OUTAGE_GUARD?.toLowerCase() !== "false";
+  const outageSpeedFloorBytes = parseIntStrict(
+    process.env.OUTAGE_SPEED_FLOOR_BYTES || "1024", "OUTAGE_SPEED_FLOOR_BYTES", 0,
+  );
+  const outageMinActiveDownloading = parseIntStrict(
+    process.env.OUTAGE_MIN_ACTIVE || "3", "OUTAGE_MIN_ACTIVE", 1,
+  );
+
+  // Import-rejection reaper: scan *arr queues for releases that finished
+  // downloading but were rejected at import, and clean up the orphans. Opt-in
+  // (defaults off) because it acts on completed torrents, a wider blast radius
+  // than the stalled/metaDL detection.
+  const importRejectEnabled = process.env.IMPORT_REJECT?.toLowerCase() === "true";
+
   const dryRunEnv = process.env.DRY_RUN;
   const dryRun = dryRunEnv?.toLowerCase() !== "false";
 
@@ -183,6 +204,10 @@ export function loadConfig(): Config {
     metadataStuckMs: metadataStuckMinutes * 60 * 1000,
     stalledThresholds,
     maxActionsPerCycle,
+    outageGuardEnabled,
+    outageSpeedFloorBytes,
+    outageMinActiveDownloading,
+    importRejectEnabled,
     dryRun,
     logLevel: process.env.LOG_LEVEL || "info",
     stateFilePath: process.env.STATE_FILE || "./arrshole-state.json",

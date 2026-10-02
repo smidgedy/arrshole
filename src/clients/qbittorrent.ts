@@ -1,5 +1,5 @@
 import type { Logger } from "../logger.js";
-import type { QBitTorrent } from "../types.js";
+import type { QBitTorrent, QBitTransferInfo } from "../types.js";
 import { drain } from "../util.js";
 
 const REQUEST_TIMEOUT = 15000;
@@ -125,6 +125,27 @@ export class QBitClient {
       throw new Error("qBittorrent getTorrent returned invalid JSON");
     }
     return torrents.length > 0 ? torrents[0] : null;
+  }
+
+  /** Fetch global transfer stats (download/upload rates). Re-authenticates on 403. */
+  async getTransferInfo(): Promise<QBitTransferInfo> {
+    const response = await this.fetchWithReauth(() =>
+      fetch(`${this.url}/api/v2/transfer/info`, {
+        headers: { Cookie: this.cookieHeader },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      }),
+    );
+
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`qBittorrent getTransferInfo failed: HTTP ${response.status}`);
+    }
+
+    try {
+      return (await response.json()) as QBitTransferInfo;
+    } catch {
+      throw new Error("qBittorrent getTransferInfo returned invalid JSON");
+    }
   }
 
   /** Delete a torrent and optionally its downloaded files. */

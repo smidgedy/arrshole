@@ -3,7 +3,8 @@ import type { Config } from "./config.js";
 import type { ArrClient } from "./clients/arr-client.js";
 import type { QBitClient } from "./clients/qbittorrent.js";
 import { StateTracker } from "./state-tracker.js";
-import { STUCK_ELIGIBLE_STATES } from "./types.js";
+import { STUCK_ELIGIBLE_STATES, ACTIVE_DOWNLOAD_STATES } from "./types.js";
+import { classifyReject, aggregateRejects } from "./reject-classifier.js";
 
 /**
  * Core polling loop. Detects stuck torrents, notifies *arr apps to blocklist
@@ -107,8 +108,58 @@ export class Monitor {
       "Poll complete",
     );
 
+    // Import-rejection reaper runs independently of stalled/metaDL detection —
+    // it works off *arr queue status, not qBit torrent state, so it must run
+    // even when nothing is stuck in qBittorrent.
+    if (this.config.importRejectEnabled) {
+      try {
+        await this.scanImportRejects(this.config.maxActionsPerCycle);
+      } catch (err) {
+        this.logger.error({ err }, "Import-rejection scan failed");
+      }
+    }
+
     if (stuckList.length === 0) {
       return;
+    }
+
+    // Step 3a: Outage guard. A client-wide qBittorrent outage makes every active
+    // torrent stall at once — indistinguishable, per-torrent, from a batch of
+    // genuinely dead releases. The tell is global transfer rate: if the whole
+    // client is at ~0 B/s while many torrents are trying to download, assume an
+    // outage and skip all actions this cycle. Resumes automatically once speed
+    // recovers. Fail-safe: if we can't read the rate, skip rather than risk a
+    // mass blocklist.
+    if (this.config.outageGuardEnabled) {
+      const activeDownloading = torrents.filter((t) =>
+        ACTIVE_DOWNLOAD_STATES.has(t.state),
+      ).length;
+
+      if (activeDownloading >= this.config.outageMinActiveDownloading) {
+        let dlSpeed: number;
+        try {
+          dlSpeed = (await this.qbit.getTransferInfo()).dl_info_speed;
+        } catch (err) {
+          this.logger.warn(
+            { err, stuck: stuckList.length, activeDownloading },
+            "Outage guard: could not read transfer info — skipping actions this cycle",
+          );
+          return;
+        }
+
+        if (dlSpeed <= this.config.outageSpeedFloorBytes) {
+          this.logger.warn(
+            {
+              dlSpeedBytes: dlSpeed,
+              floorBytes: this.config.outageSpeedFloorBytes,
+              activeDownloading,
+              stuck: stuckList.length,
+            },
+            "Outage guard tripped: qBittorrent download rate near zero while torrents are active — suspected client-wide outage, skipping all actions this cycle",
+          );
+          return;
+        }
+      }
     }
 
     // Step 3b: Filter out torrents with no mapped *arr app (don't waste circuit breaker slots)
@@ -318,5 +369,111 @@ export class Monitor {
     }
 
     this.stateTracker.remove(hash);
+  }
+
+  /**
+   * Scan every configured *arr app's queue for releases that finished
+   * downloading but were rejected at import, classify each, and clean them up.
+   *
+   * Unlike the stalled/metaDL path this is driven entirely by *arr queue status
+   * (trackedDownloadState + statusMessages), not qBittorrent state — a rejected
+   * release sits at stoppedUP/pausedUP in qBit, indistinguishable there from a
+   * healthy torrent seeding after a good import. No qBit timer is needed: the
+   * actionable states (importFailed/importBlocked) are terminal, and the one
+   * transient state (importPending) is deliberately skipped by the classifier.
+   *
+   * The item is in the *arr queue, so removal goes through *arr with
+   * removeFromClient=true — *arr deletes the torrent and its files from
+   * qBittorrent, blocklists the release, and (for defective releases only)
+   * searches for a replacement.
+   *
+   * @param limit  Max items to act on this pass (circuit breaker). Undefined = unlimited (one-shot).
+   */
+  async scanImportRejects(limit?: number): Promise<void> {
+    let acted = 0;
+    let skipped = 0;
+
+    for (const [appName, arrClient] of this.arrClients) {
+      let records;
+      try {
+        records = await arrClient.getRejectRecords();
+      } catch (err) {
+        this.logger.error({ app: arrClient.name, err }, "Failed to fetch queue for reject scan");
+        continue;
+      }
+
+      // Collapse per-episode/track records to one entry per torrent before acting.
+      const items = aggregateRejects(records);
+
+      for (const item of items) {
+        const verdict = classifyReject(item);
+
+        if (verdict.kind === "skip") {
+          skipped++;
+          this.logger.debug(
+            { app: arrClient.name, title: item.title, state: item.trackedDownloadState, reason: verdict.reason },
+            "Reject scan: skipping",
+          );
+          continue;
+        }
+
+        if (limit !== undefined && acted >= limit) {
+          this.logger.warn(
+            { app: arrClient.name, limit },
+            "Reject scan: circuit breaker reached — remaining items deferred to next cycle",
+          );
+          return;
+        }
+
+        const redownload = verdict.kind === "defective";
+
+        if (this.config.dryRun) {
+          this.logger.info(
+            {
+              app: arrClient.name,
+              title: item.title,
+              downloadId: item.downloadId,
+              classification: verdict.kind,
+              reason: verdict.reason,
+              wouldReSearch: redownload,
+            },
+            "[DRY RUN] Would delete rejected download + files, blocklist" +
+              (redownload ? " and re-search" : " (no re-search — redundant)"),
+          );
+          acted++;
+          continue;
+        }
+
+        try {
+          await arrClient.removeRejected(item.id, redownload);
+          acted++;
+          this.logger.warn(
+            {
+              action: "reject_reaped",
+              app: arrClient.name,
+              title: item.title,
+              downloadId: item.downloadId,
+              classification: verdict.kind,
+              reason: verdict.reason,
+              reSearched: redownload,
+            },
+            `Reaped rejected import from ${arrClient.name}: deleted download + files, blocklisted` +
+              (redownload ? ", searching for replacement" : " (redundant — no re-search)"),
+          );
+        } catch (err) {
+          this.logger.error(
+            { app: arrClient.name, title: item.title, downloadId: item.downloadId, err },
+            "Failed to reap rejected import — will retry next cycle",
+          );
+        }
+      }
+    }
+
+    if (acted > 0 || skipped > 0) {
+      this.logger.info(
+        { acted, skipped, dryRun: this.config.dryRun },
+        "Import-rejection scan complete",
+      );
+    }
   }
 }

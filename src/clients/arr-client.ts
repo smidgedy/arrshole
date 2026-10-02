@@ -1,5 +1,5 @@
 import type { Logger } from "../logger.js";
-import type { ArrQueueRecord } from "../types.js";
+import type { ArrQueueRecord, ArrRejectRecord } from "../types.js";
 import { drain } from "../util.js";
 
 const REQUEST_TIMEOUT = 15000;
@@ -14,9 +14,18 @@ interface QueueResponse {
     id: number;
     downloadId: string;
     title: string;
+    trackedDownloadState?: string;
+    trackedDownloadStatus?: string;
+    sizeleft?: number;
+    statusMessages?: Array<{ title?: string; messages?: string[] }>;
     [key: string]: unknown;
   }>;
 }
+
+// includeUnknown*Items surfaces queue items whose series/movie/artist link was
+// lost (common once an import is rejected), so rejected orphans aren't hidden.
+const REJECT_QUEUE_PARAMS =
+  "includeUnknownSeriesItems=true&includeUnknownMovieItems=true&includeUnknownArtistItems=true";
 
 interface HistoryResponse {
   page: number;
@@ -94,6 +103,93 @@ export class ArrClient {
     }
 
     return allRecords;
+  }
+
+  /**
+   * Fetch all queue items with their tracked-download status fields, for
+   * import-rejection detection. Flattens statusMessages (titles + messages)
+   * into a single string array per record.
+   */
+  async getRejectRecords(): Promise<ArrRejectRecord[]> {
+    const allRecords: ArrRejectRecord[] = [];
+    let page = 1;
+
+    while (page <= MAX_PAGES) {
+      const url = this.apiUrl(`/queue?page=${page}&pageSize=${PAGE_SIZE}&${REJECT_QUEUE_PARAMS}`);
+      this.logger.debug({ url, app: this.name }, "Fetching queue page (reject scan)");
+
+      const response = await fetch(url, {
+        headers: this.headers,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      });
+
+      if (!response.ok) {
+        await drain(response);
+        throw new Error(`${this.name} getRejectRecords failed: HTTP ${response.status}`);
+      }
+
+      let data: QueueResponse;
+      try {
+        data = (await response.json()) as QueueResponse;
+      } catch {
+        throw new Error(`${this.name} getRejectRecords returned invalid JSON`);
+      }
+
+      for (const record of data.records) {
+        const messages: string[] = [];
+        for (const sm of record.statusMessages ?? []) {
+          if (sm.title) messages.push(sm.title);
+          for (const m of sm.messages ?? []) messages.push(m);
+        }
+        allRecords.push({
+          id: record.id,
+          downloadId: record.downloadId,
+          title: record.title,
+          trackedDownloadState: record.trackedDownloadState ?? "",
+          trackedDownloadStatus: record.trackedDownloadStatus ?? "",
+          downloadComplete: record.sizeleft === 0,
+          messages,
+        });
+      }
+
+      if (allRecords.length >= data.totalRecords) break;
+      page++;
+    }
+
+    if (page > MAX_PAGES) {
+      this.logger.warn(
+        { app: this.name, pages: MAX_PAGES, fetched: allRecords.length },
+        "Pagination limit reached (reject scan) — queue may be incomplete",
+      );
+    }
+
+    return allRecords;
+  }
+
+  /**
+   * Remove a rejected queue item, deleting the download and its files from the
+   * download client. Always blocklists the release. `redownload` controls
+   * whether *arr searches for a replacement afterwards (true for defective
+   * releases, false for redundant ones we already have).
+   */
+  async removeRejected(queueId: number, redownload: boolean): Promise<void> {
+    const skipRedownload = redownload ? "false" : "true";
+    const url = this.apiUrl(
+      `/queue/${queueId}?removeFromClient=true&blocklist=true&skipRedownload=${skipRedownload}`,
+    );
+    this.logger.debug({ url, queueId, app: this.name, redownload }, "Removing rejected queue item");
+
+    const response = await fetch(url, {
+      method: "DELETE",
+      headers: this.headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+    });
+
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`${this.name} removeRejected failed: HTTP ${response.status}`);
+    }
+    await drain(response);
   }
 
   /** Remove a queue item, add its release to the blocklist, and trigger a re-search. */

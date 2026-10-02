@@ -13,6 +13,7 @@ const { values: cli } = parseArgs({
     now:     { type: "boolean", default: false },
     stalled: { type: "boolean", default: false },
     metadl:  { type: "boolean", default: false },
+    rejects: { type: "boolean", default: false },
     below:   { type: "string" },
     above:   { type: "string" },
     help:    { type: "boolean", default: false },
@@ -29,26 +30,28 @@ Daemon mode (default):
   Polls on an interval, applies configured thresholds.
 
 One-shot mode:
-  --now                Run once and exit (requires --stalled and/or --metadl)
+  --now                Run once and exit (requires --stalled, --metadl and/or --rejects)
   --stalled            Include stalledDL torrents
   --metadl             Include metaDL/forcedMetaDL torrents
+  --rejects            Reap *arr import-rejections (releases that downloaded then failed import)
   --below <percent>    Only torrents below this completion % (exclusive)
   --above <percent>    Only torrents above this completion % (exclusive)
 
 Examples:
   node dist/index.js --now --stalled --metadl
+  node dist/index.js --now --rejects
   node dist/index.js --now --stalled --below 10
   node dist/index.js --now --stalled --above 90`);
   process.exit(0);
 }
 
-if (cli.now && !cli.stalled && !cli.metadl) {
-  console.error("--now requires at least one of --stalled or --metadl");
+if (cli.now && !cli.stalled && !cli.metadl && !cli.rejects) {
+  console.error("--now requires at least one of --stalled, --metadl, or --rejects");
   process.exit(1);
 }
 
-if ((cli.stalled || cli.metadl || cli.below || cli.above) && !cli.now) {
-  console.error("--stalled, --metadl, --below, and --above require --now");
+if ((cli.stalled || cli.metadl || cli.rejects || cli.below || cli.above) && !cli.now) {
+  console.error("--stalled, --metadl, --rejects, --below, and --above require --now");
   process.exit(1);
 }
 
@@ -183,7 +186,14 @@ if (cli.now) {
   if (cli.metadl) { states.add("metaDL"); states.add("forcedMetaDL"); }
 
   try {
-    await monitor.runOnce(states, below, above);
+    if (states.size > 0) {
+      await monitor.runOnce(states, below, above);
+    }
+    if (cli.rejects) {
+      // One-shot reject reaping bypasses the env flag and the circuit breaker —
+      // it's an explicit operator request to clear the current backlog.
+      await monitor.scanImportRejects();
+    }
   } catch (err) {
     logger.fatal({ err }, "One-shot run failed");
     process.exit(1);

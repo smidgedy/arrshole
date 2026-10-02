@@ -75,6 +75,10 @@ All configuration is via environment variables in `.env`.
 | `METADATA_STUCK_MINUTES` | No | `10` | Minutes in metaDL before acting |
 | `STALLED_THRESHOLDS` | No | `100:24` | Progress-based stalled thresholds (see below) |
 | `MAX_ACTIONS_PER_CYCLE` | No | `5` | Max deletions per poll cycle (circuit breaker) |
+| `OUTAGE_GUARD` | No | `true` | Skip all actions during a suspected client-wide outage (see below). `false` to disable |
+| `OUTAGE_SPEED_FLOOR_BYTES` | No | `1024` | Global DL rate (B/s) at or below which the client counts as "not downloading" |
+| `OUTAGE_MIN_ACTIVE` | No | `3` | Minimum torrents in a downloading state before the outage guard can engage |
+| `IMPORT_REJECT` | No | `false` | Set to `true` to reap *arr import-rejections (see below) |
 | `DRY_RUN` | No | `true` | Set to `false` to enable destructive actions |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error`, `fatal` |
 | `STATE_FILE` | No | `./arrshole-state.json` | Path to persist tracking state across restarts |
@@ -93,6 +97,56 @@ Example: `10:1,90:12,100:24` means:
 - Torrents at **91–100%** — clear after **24 hours** stalled (nearly done, give them time)
 
 The default `100:24` applies a flat 24-hour threshold to all stalled torrents regardless of progress.
+
+### Outage guard
+
+A client-wide qBittorrent outage (lost connectivity, VPN drop, the daemon wedging) makes *every* active torrent stall at the same time. Looked at one torrent at a time, that's indistinguishable from a batch of genuinely dead releases — so without a guard, arrshole would blocklist and delete everything that crossed its stall thresholds during the outage, potentially thousands of releases.
+
+The tell that separates an outage from real dead torrents is the **global transfer rate**: during an outage the whole client sits at ~0 B/s. Each cycle, before taking any action, arrshole checks `qBittorrent`'s global download rate (`/api/v2/transfer/info`). If the rate is at or below `OUTAGE_SPEED_FLOOR_BYTES` **and** at least `OUTAGE_MIN_ACTIVE` torrents are in a downloading state, it treats the situation as a client-wide outage and skips all actions for that cycle. It resumes automatically on the next cycle once the rate recovers — no manual intervention.
+
+The `OUTAGE_MIN_ACTIVE` floor stops a quiet, legitimately-idle client (nothing downloading, so 0 B/s is normal) from being mistaken for an outage. The guard is **fail-safe**: if the transfer rate can't be read at all, the cycle is skipped rather than risk acting blind. Set `OUTAGE_GUARD=false` to disable it entirely.
+
+### Import-rejection reaper
+
+Separate from stalled/metaDL detection, this handles a different failure mode: a
+release that **finishes downloading** and is then **rejected at import** by the
+*arr app — e.g. Lidarr rejecting an album because a track is missing, or Sonarr
+rejecting a release that turned out not to be an upgrade. The download sits
+completed-but-stopped in qBittorrent forever, orphaned.
+
+This can't be detected from qBittorrent state: a completed torrent sitting at
+`stoppedUP`/`pausedUP` is indistinguishable there from a healthy torrent seeding
+after a *successful* import. The authoritative signal lives in the *arr app — the
+queue item's `trackedDownloadState` (`importFailed`/`importBlocked`) plus the
+`statusMessages` explaining why. So the reaper is driven entirely by the *arr
+queue, and correlates back to the download by ID.
+
+Each rejected item is classified by its reason:
+
+- **Defective** (incomplete release, missing tracks/episodes, wrong match) — the
+  item has no acceptable file, so arrshole tells *arr to delete the download and
+  its files, blocklist the release, and **search for a replacement**.
+- **Redundant** ("not an upgrade for existing file" — you already have an equal or
+  better copy) — the item isn't deficient, so arrshole deletes the orphan and
+  blocklists it to stop a re-grab loop, but does **not** re-search (that would
+  churn and risk blocklisting the whole release pool for something you have).
+- **Skip** — transient states (`importPending`, still importing) and any reason
+  the classifier doesn't recognise are left untouched and logged, so nothing is
+  acted on speculatively.
+
+Removal goes through the *arr queue with `removeFromClient=true`, so *arr deletes
+the torrent and files from qBittorrent and applies the blocklist atomically.
+Because a season-pack surfaces as one queue record per episode (all sharing a
+download ID), records are collapsed to one action per torrent before the circuit
+breaker (`MAX_ACTIONS_PER_CYCLE`) is applied.
+
+Disabled by default — it acts on completed torrents, a wider blast radius than
+stalled/metaDL detection, so it's opt-in via `IMPORT_REJECT=true`. `DRY_RUN` still
+applies. To clear the current backlog immediately without waiting for poll cycles:
+
+```bash
+node dist/index.js --now --rejects        # DRY_RUN=true previews; false acts
+```
 
 ### State persistence
 
@@ -121,6 +175,7 @@ node dist/index.js --now --stalled --above 10 --below 50
 | `--now` | Run once and exit (required for one-shot mode) |
 | `--stalled` | Include `stalledDL` torrents |
 | `--metadl` | Include `metaDL`/`forcedMetaDL` torrents |
+| `--rejects` | Reap *arr import-rejections (see "Import-rejection reaper") |
 | `--below <pct>` | Only torrents below this completion % (exclusive) |
 | `--above <pct>` | Only torrents above this completion % (exclusive) |
 | `--help` | Show usage information |
