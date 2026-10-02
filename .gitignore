@@ -4,3 +4,7 @@ dist
 !.env.example
 coverage/
 arrshole-state.json
+taste/.venv
+taste-data/
+__pycache__/
+*.egg-info/

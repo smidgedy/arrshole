@@ -94,7 +94,7 @@ describe("CLI argument parsing", () => {
   it("--now without --stalled or --metadl exits 1 with error", () => {
     const { stderr, exitCode } = run("--now");
     assert.equal(exitCode, 1);
-    assert.ok(stderr.includes("--now requires at least one of --stalled, --metadl, or --rejects"));
+    assert.ok(stderr.includes("--now requires at least one of --stalled, --metadl, --rejects, or --taste"));
   });
 
   it("--stalled without --now exits 1 with error", () => {

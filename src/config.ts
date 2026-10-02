@@ -8,6 +8,20 @@ export interface StalledThresholdConfig {
   stuckMs: number;
 }
 
+export interface TasteConfig {
+  /** Python interpreter for the taste model (relative paths resolve against the working dir). */
+  python: string;
+  /** Working directory for the model process (the taste/ package lives here). */
+  cwd: string;
+  intervalMs: number;
+  /** After a failed run, wait this long before trying again. */
+  retryMs: number;
+  timeoutMs: number;
+  /** Circuit breaker: max tag adds + removes applied per run, across apps. */
+  maxTagChanges: number;
+  stateFilePath: string;
+}
+
 export interface Config {
   qbit: { url: string; username: string; password: string };
   sonarr: ArrConfig | null;
@@ -22,6 +36,8 @@ export interface Config {
   outageSpeedFloorBytes: number;
   outageMinActiveDownloading: number;
   importRejectEnabled: boolean;
+  /** Junk tagger (opt-in, TASTE=true): null when disabled. */
+  taste: TasteConfig | null;
   dryRun: boolean;
   logLevel: string;
   stateFilePath: string;
@@ -191,6 +207,20 @@ export function loadConfig(): Config {
   // than the stalled/metaDL detection.
   const importRejectEnabled = process.env.IMPORT_REJECT?.toLowerCase() === "true";
 
+  // Junk tagger: periodically runs the taste model and applies its `junk` tag plan.
+  // Opt-in; tag changes still honour DRY_RUN.
+  const taste: TasteConfig | null = process.env.TASTE?.toLowerCase() === "true"
+    ? {
+        python: process.env.TASTE_PYTHON || ".venv/bin/python",
+        cwd: process.env.TASTE_DIR || "./taste",
+        intervalMs: parseIntStrict(process.env.TASTE_INTERVAL_HOURS || "24", "TASTE_INTERVAL_HOURS", 1) * 3600_000,
+        retryMs: 3600_000,
+        timeoutMs: parseIntStrict(process.env.TASTE_TIMEOUT_MINUTES || "30", "TASTE_TIMEOUT_MINUTES", 1) * 60_000,
+        maxTagChanges: parseIntStrict(process.env.TASTE_MAX_TAG_CHANGES || "40", "TASTE_MAX_TAG_CHANGES", 1),
+        stateFilePath: process.env.TASTE_STATE_FILE || "./taste-data/arrshole-taste.json",
+      }
+    : null;
+
   const dryRunEnv = process.env.DRY_RUN;
   const dryRun = dryRunEnv?.toLowerCase() !== "false";
 
@@ -208,6 +238,7 @@ export function loadConfig(): Config {
     outageSpeedFloorBytes,
     outageMinActiveDownloading,
     importRejectEnabled,
+    taste,
     dryRun,
     logLevel: process.env.LOG_LEVEL || "info",
     stateFilePath: process.env.STATE_FILE || "./arrshole-state.json",

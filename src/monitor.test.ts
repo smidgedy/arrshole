@@ -24,6 +24,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     outageSpeedFloorBytes: 1024,
     outageMinActiveDownloading: 3,
     importRejectEnabled: false,
+    taste: null,
     dryRun: true,
     logLevel: "silent",
     stateFilePath: "",

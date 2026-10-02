@@ -1,0 +1,71 @@
+# Tuning for the junk tagger. Read by `python -m arr_taste` on every run.
+
+[tags]
+junk = "junk"     # tag arrshole adds to suggested deletions
+keep = "keep"     # your "I looked, keep it" tag (also respected by your UI filters)
+
+[weights]
+# Training labels: 1 = you'd delete it, 0 = you keep it. Weights say how much each kind of evidence counts.
+deleted  = 2.0   # disappeared from the library: a deliberate deletion
+excluded = 1.0   # import-list exclusion (older deletions, plus some list rejects never downloaded)
+keep     = 4.0   # in library with the keep tag
+pending  = 0.25  # in library, matches one of your UI deletion filters, no keep tag (maybe not processed yet)
+retained = 1.0   # everything else in the library
+feedback = 3.0   # an explicit verdict (junk -> keep / junk -> deleted / review rounds)
+# Total feedback weight is capped at this share of all training weight, so a burst of
+# verdicts can't drown 12k items of history.
+feedback_cap_share = 0.15
+
+[verdict_scale]
+# Multiplies `weights.feedback` per verdict kind.
+delete    = 1.0
+probably  = 0.6
+possibly  = 0.3
+keep      = 1.0
+dismissed = 0.5  # you removed `junk` without adding `keep`: a soft keep
+
+[features]
+ratings = true
+votes = true
+release_age = false   # mostly encodes "auto-added from a new-releases list", not taste
+runtime = true
+genres = true
+language = true
+certification = true
+studio_network = true
+keywords = true       # Radarr only
+shape = true          # Sonarr only: seasons, episodes, status, type
+top_n_categories = 40
+top_n_keywords = 150
+
+[model]
+folds = 5
+seed = 7
+num_boost_round = 400
+learning_rate = 0.03
+num_leaves = 15
+# A pattern needs at least this many items behind it, which is what stops one odd verdict
+# (a single Estonian horse drama marked keep) from moving everything near it.
+min_data_in_leaf = 20
+monotone_notability = true   # votes/popularity/critic coverage may only lower P(delete)
+
+[candidates]
+# score = taste_weight * logit(P(delete)) + size_weight * ln(size_GB) - play_penalty * ln(1 + plays)
+taste_weight = 1.0
+size_weight = 0.6
+min_p_delete = 0.35
+min_size_gb_movies = 4
+min_size_gb_series = 10
+junk_movies = 10   # how many items carry `junk` at once, per app
+junk_series = 10
+hysteresis = 0.10  # an existing junk tag is only withdrawn once P(delete) < min_p_delete - hysteresis
+
+[watch]
+protect_min_plays = 1
+protect_months = 12
+play_penalty = 1.0
+
+[plex]
+# Plex's nightly DB backups (read-only, newest is used). Leave empty to skip.
+db_dir = "/mnt/c/Users/Arcade/AppData/Local/Plex Media Server/Plug-in Support/Databases"
+plextv_history = true   # needs PLEX_TOKEN in the environment

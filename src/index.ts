@@ -7,6 +7,7 @@ import { QBitClient } from "./clients/qbittorrent.js";
 import { ArrClient } from "./clients/arr-client.js";
 import { Monitor } from "./monitor.js";
 import { StateTracker } from "./state-tracker.js";
+import { JunkTagger } from "./junk-tagger.js";
 
 const { values: cli } = parseArgs({
   options: {
@@ -14,6 +15,7 @@ const { values: cli } = parseArgs({
     stalled: { type: "boolean", default: false },
     metadl:  { type: "boolean", default: false },
     rejects: { type: "boolean", default: false },
+    taste:   { type: "boolean", default: false },
     below:   { type: "string" },
     above:   { type: "string" },
     help:    { type: "boolean", default: false },
@@ -30,28 +32,30 @@ Daemon mode (default):
   Polls on an interval, applies configured thresholds.
 
 One-shot mode:
-  --now                Run once and exit (requires --stalled, --metadl and/or --rejects)
+  --now                Run once and exit (requires --stalled, --metadl, --rejects and/or --taste)
   --stalled            Include stalledDL torrents
   --metadl             Include metaDL/forcedMetaDL torrents
   --rejects            Reap *arr import-rejections (releases that downloaded then failed import)
+  --taste              Run the taste model and apply its junk-tag plan (needs TASTE=true)
   --below <percent>    Only torrents below this completion % (exclusive)
   --above <percent>    Only torrents above this completion % (exclusive)
 
 Examples:
   node dist/index.js --now --stalled --metadl
   node dist/index.js --now --rejects
+  node dist/index.js --now --taste
   node dist/index.js --now --stalled --below 10
   node dist/index.js --now --stalled --above 90`);
   process.exit(0);
 }
 
-if (cli.now && !cli.stalled && !cli.metadl && !cli.rejects) {
-  console.error("--now requires at least one of --stalled, --metadl, or --rejects");
+if (cli.now && !cli.stalled && !cli.metadl && !cli.rejects && !cli.taste) {
+  console.error("--now requires at least one of --stalled, --metadl, --rejects, or --taste");
   process.exit(1);
 }
 
-if ((cli.stalled || cli.metadl || cli.rejects || cli.below || cli.above) && !cli.now) {
-  console.error("--stalled, --metadl, --rejects, --below, and --above require --now");
+if ((cli.stalled || cli.metadl || cli.rejects || cli.taste || cli.below || cli.above) && !cli.now) {
+  console.error("--stalled, --metadl, --rejects, --taste, --below, and --above require --now");
   process.exit(1);
 }
 
@@ -170,6 +174,14 @@ stateTracker.loadFromDisk();
 
 const monitor = new Monitor(qbit, arrClients, config.categoryMap, config, logger, stateTracker);
 
+const junkTagger = config.taste
+  ? new JunkTagger(config.taste, arrClients, config.dryRun, logger)
+  : null;
+if (cli.taste && !junkTagger) {
+  console.error("--taste requires TASTE=true");
+  process.exit(1);
+}
+
 process.on("unhandledRejection", (err) => {
   logger.fatal({ err, uptimeSeconds: Math.round(process.uptime()) }, "Unhandled rejection — exiting");
   process.exit(1);
@@ -194,6 +206,9 @@ if (cli.now) {
       // it's an explicit operator request to clear the current backlog.
       await monitor.scanImportRejects();
     }
+    if (cli.taste && junkTagger) {
+      await junkTagger.runOnce();
+    }
   } catch (err) {
     logger.fatal({ err }, "One-shot run failed");
     process.exit(1);
@@ -203,9 +218,10 @@ if (cli.now) {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       logger.info({ signal, uptimeSeconds: Math.round(process.uptime()) }, "Shutting down");
-      monitor.stop().then(() => process.exit(0), () => process.exit(1));
+      Promise.all([monitor.stop(), junkTagger?.stop()]).then(() => process.exit(0), () => process.exit(1));
     });
   }
 
   monitor.start();
+  junkTagger?.start();
 }

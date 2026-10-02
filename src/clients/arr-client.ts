@@ -266,4 +266,63 @@ export class ArrClient {
     }
     await drain(failedResponse);
   }
+
+  /** All tags as label (lower-cased) -> id. */
+  async getTags(): Promise<Map<string, number>> {
+    const response = await fetch(this.apiUrl("/tag"), {
+      headers: this.headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+    });
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`${this.name} getTags failed: HTTP ${response.status}`);
+    }
+    const tags = (await response.json()) as Array<{ id: number; label: string }>;
+    return new Map(tags.map((t) => [t.label.toLowerCase(), t.id]));
+  }
+
+  /** Create a tag and return its id. */
+  async createTag(label: string): Promise<number> {
+    const response = await fetch(this.apiUrl("/tag"), {
+      method: "POST",
+      headers: { ...this.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+    });
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`${this.name} createTag failed: HTTP ${response.status}`);
+    }
+    const tag = (await response.json()) as { id: number };
+    return tag.id;
+  }
+
+  /**
+   * Add or remove one tag on many library items via the bulk editor
+   * (PUT /movie/editor for Radarr, /series/editor for Sonarr). Touches tags only.
+   */
+  async editTag(
+    kind: "movie" | "series",
+    ids: number[],
+    tagId: number,
+    mode: "add" | "remove",
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    const body = {
+      [kind === "movie" ? "movieIds" : "seriesIds"]: ids,
+      tags: [tagId],
+      applyTags: mode,
+    };
+    const response = await fetch(this.apiUrl(`/${kind}/editor`), {
+      method: "PUT",
+      headers: { ...this.headers, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+    });
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`${this.name} editTag (${mode}) failed: HTTP ${response.status}`);
+    }
+    await drain(response);
+  }
 }

@@ -79,6 +79,13 @@ All configuration is via environment variables in `.env`.
 | `OUTAGE_SPEED_FLOOR_BYTES` | No | `1024` | Global DL rate (B/s) at or below which the client counts as "not downloading" |
 | `OUTAGE_MIN_ACTIVE` | No | `3` | Minimum torrents in a downloading state before the outage guard can engage |
 | `IMPORT_REJECT` | No | `false` | Set to `true` to reap *arr import-rejections (see below) |
+| `TASTE` | No | `false` | Set to `true` to enable the junk tagger (see below) |
+| `TASTE_INTERVAL_HOURS` | No | `24` | How often the taste model runs |
+| `TASTE_TIMEOUT_MINUTES` | No | `30` | Kill the model run if it takes longer |
+| `TASTE_MAX_TAG_CHANGES` | No | `40` | Max tag adds + removes per run (circuit breaker) |
+| `TASTE_DIR` / `TASTE_PYTHON` | No | `./taste` / `.venv/bin/python` | Where the model package and its interpreter live |
+| `TASTE_STATE_FILE` | No | `./taste-data/arrshole-taste.json` | Last-run bookkeeping |
+| `PLEX_TOKEN` | No | — | Lets the model read your plex.tv watch history |
 | `DRY_RUN` | No | `true` | Set to `false` to enable destructive actions |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error`, `fatal` |
 | `STATE_FILE` | No | `./arrshole-state.json` | Path to persist tracking state across restarts |
@@ -148,6 +155,33 @@ applies. To clear the current backlog immediately without waiting for poll cycle
 node dist/index.js --now --rejects        # DRY_RUN=true previews; false acts
 ```
 
+### Junk tagger
+
+Opt-in (`TASTE=true`). Once a day arrshole runs a taste model (`taste/`, Python) that learns what you keep versus delete in Radarr/Sonarr, then puts a `junk` tag on the strongest deletion candidates: a poor taste fit *and* a lot of disk space. Filter on `junk` in the Radarr/Sonarr UI, then for each item:
+
+- **delete it**: recorded as a confirmed deletion
+- **add `keep`**: arrshole removes `junk`, and the model counts it as a keep
+- **just remove `junk`**: counted as a soft keep
+
+Nothing is ever deleted by arrshole; it only adds and removes the `junk` tag. `DRY_RUN` applies (dry run logs the planned tag changes), and `TASTE_MAX_TAG_CHANGES` caps changes per run.
+
+**What it learns from:** items removed from the library, import-list exclusions (older deletions), your `keep` tags, your UI custom filters (a filter match without `keep` counts as "maybe not processed yet", at low weight), and your verdicts on `junk` items. Plex watch history (every account, from Plex's nightly DB backups, plus your plex.tv history if `PLEX_TOKEN` is set) protects anything watched in the last 12 months. It is not a taste signal, because deleted items have no history.
+
+**Not overreacting:** a verdict counts as one labelled item at about 3× normal weight; total verdict weight is capped at 15% of the training weight; and a pattern needs 20+ items behind it before the model acts on it. One odd keep (a single Estonian horse drama) doesn't rescue everything similar, but a consistent run of keeps does (see `taste/tests`). Each run logs score drift against the previous run.
+
+**Tuning:** `taste/taste.toml` (weights, features, how many items carry `junk` at once, size vs taste balance). Per-run reports (ranked candidates, the plan, metrics) are written to `taste-data/runs/<id>/`.
+
+Setup (once):
+
+```bash
+python3 -m venv taste/.venv
+taste/.venv/bin/pip install -e taste
+# optional: import historic deletions/verdicts gathered elsewhere
+(cd taste && .venv/bin/python -m arr_taste seed /path/to/seed.jsonl)
+```
+
+Run the model alone (read-only, prints the plan JSON): `cd taste && RADARR_URL=... RADARR_API_KEY=... .venv/bin/python -m arr_taste plan`. Tests: `cd taste && .venv/bin/pip install -e '.[dev]' && .venv/bin/python -m pytest`.
+
 ### State persistence
 
 arrshole tracks when it first observes each torrent in a stalled state. This tracking is persisted to disk (at `STATE_FILE`, default `./arrshole-state.json`) so that stall timers survive service restarts. If a torrent resumes downloading, its timer is cleared. On startup, arrshole logs how many tracked entries were restored and how long ago the state was saved.
@@ -176,6 +210,7 @@ node dist/index.js --now --stalled --above 10 --below 50
 | `--stalled` | Include `stalledDL` torrents |
 | `--metadl` | Include `metaDL`/`forcedMetaDL` torrents |
 | `--rejects` | Reap *arr import-rejections (see "Import-rejection reaper") |
+| `--taste` | Run the taste model now and apply its junk-tag plan (needs `TASTE=true`) |
 | `--below <pct>` | Only torrents below this completion % (exclusive) |
 | `--above <pct>` | Only torrents above this completion % (exclusive) |
 | `--help` | Show usage information |

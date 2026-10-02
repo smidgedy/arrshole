@@ -260,4 +260,55 @@ describe("ArrClient", () => {
       assert.ok(urlStr.includes("/api/v1/queue"));
     });
   });
+
+  describe("tags", () => {
+    it("getTags maps lower-cased labels to ids", async () => {
+      mockFetch.mock.mockImplementation(async () =>
+        new Response(JSON.stringify([{ id: 1, label: "keep" }, { id: 5, label: "Junk" }]), { status: 200 }));
+      const client = new ArrClient("Radarr", "http://localhost:7878", "k", "v3", makeSilentLogger());
+      const tags = await client.getTags();
+      assert.equal(tags.get("junk"), 5);
+      assert.equal(String(mockFetch.mock.calls[0].arguments[0]), "http://localhost:7878/api/v3/tag");
+    });
+
+    it("createTag POSTs the label and returns the new id", async () => {
+      mockFetch.mock.mockImplementation(async () => new Response(JSON.stringify({ id: 9, label: "junk" }), { status: 201 }));
+      const client = new ArrClient("Radarr", "http://localhost:7878", "k", "v3", makeSilentLogger());
+      assert.equal(await client.createTag("junk"), 9);
+      const init = mockFetch.mock.calls[0].arguments[1] as RequestInit;
+      assert.equal(init.method, "POST");
+      assert.deepEqual(JSON.parse(init.body as string), { label: "junk" });
+    });
+
+    it("editTag uses the movie editor with movieIds for Radarr", async () => {
+      mockFetch.mock.mockImplementation(async () => new Response("[]", { status: 202 }));
+      const client = new ArrClient("Radarr", "http://localhost:7878", "k", "v3", makeSilentLogger());
+      await client.editTag("movie", [1, 2], 9, "add");
+      const [url, init] = mockFetch.mock.calls[0].arguments as [string, RequestInit];
+      assert.equal(String(url), "http://localhost:7878/api/v3/movie/editor");
+      assert.equal(init.method, "PUT");
+      assert.deepEqual(JSON.parse(init.body as string), { movieIds: [1, 2], tags: [9], applyTags: "add" });
+    });
+
+    it("editTag uses the series editor with seriesIds for Sonarr", async () => {
+      mockFetch.mock.mockImplementation(async () => new Response("[]", { status: 202 }));
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "k", "v3", makeSilentLogger());
+      await client.editTag("series", [4], 9, "remove");
+      const [url, init] = mockFetch.mock.calls[0].arguments as [string, RequestInit];
+      assert.equal(String(url), "http://localhost:8989/api/v3/series/editor");
+      assert.deepEqual(JSON.parse(init.body as string), { seriesIds: [4], tags: [9], applyTags: "remove" });
+    });
+
+    it("editTag with no ids makes no request", async () => {
+      const client = new ArrClient("Sonarr", "http://localhost:8989", "k", "v3", makeSilentLogger());
+      await client.editTag("series", [], 9, "add");
+      assert.equal(mockFetch.mock.callCount(), 0);
+    });
+
+    it("editTag throws on HTTP error", async () => {
+      mockFetch.mock.mockImplementation(async () => new Response("bad", { status: 400 }));
+      const client = new ArrClient("Radarr", "http://localhost:7878", "k", "v3", makeSilentLogger());
+      await assert.rejects(client.editTag("movie", [1], 9, "add"), /HTTP 400/);
+    });
+  });
 });
