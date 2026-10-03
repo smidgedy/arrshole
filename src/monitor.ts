@@ -514,7 +514,7 @@ export class Monitor {
     const queues = new Map<string, Awaited<ReturnType<ArrClient["getQueueItems"]>>>();
 
     for (const t of torrents) {
-      const app = this.categoryMap.get(t.category);
+      const app = this.categoryMap.get(t.category.toLowerCase());
       const kind = app ? kindForApp(app) : null;
       if (!app || !kind) continue;
       if (METADATA_STATES.has(t.state)) continue;
