@@ -36,6 +36,8 @@ export interface Config {
   outageSpeedFloorBytes: number;
   outageMinActiveDownloading: number;
   importRejectEnabled: boolean;
+  /** Bad-release reaper (opt-in, BAD_RELEASE=true): remove + blocklist fake/malicious downloads. */
+  badReleaseEnabled: boolean;
   /** Junk tagger (opt-in, TASTE=true): null when disabled. */
   taste: TasteConfig | null;
   dryRun: boolean;
@@ -207,6 +209,10 @@ export function loadConfig(): Config {
   // than the stalled/metaDL detection.
   const importRejectEnabled = process.env.IMPORT_REJECT?.toLowerCase() === "true";
 
+  // Bad-release reaper: inspect each Sonarr/Radarr download's file list and remove + blocklist
+  // fakes (executables, disc-image payloads, no video). Opt-in; DRY_RUN applies.
+  const badReleaseEnabled = process.env.BAD_RELEASE?.toLowerCase() === "true";
+
   // Junk tagger: periodically runs the taste model and applies its `junk` tag plan.
   // Opt-in; tag changes still honour DRY_RUN.
   const taste: TasteConfig | null = process.env.TASTE?.toLowerCase() === "true"
@@ -238,6 +244,7 @@ export function loadConfig(): Config {
     outageSpeedFloorBytes,
     outageMinActiveDownloading,
     importRejectEnabled,
+    badReleaseEnabled,
     taste,
     dryRun,
     logLevel: process.env.LOG_LEVEL || "info",

@@ -1,3 +1,4 @@
+import type { TorrentFile } from "../release-inspector.js";
 import type { Logger } from "../logger.js";
 import type { QBitTorrent, QBitTransferInfo } from "../types.js";
 import { drain } from "../util.js";
@@ -125,6 +126,30 @@ export class QBitClient {
       throw new Error("qBittorrent getTorrent returned invalid JSON");
     }
     return torrents.length > 0 ? torrents[0] : null;
+  }
+
+  /** Files inside a torrent (name relative to the torrent root, size in bytes). Empty until metadata is known. */
+  async getTorrentFiles(hash: string): Promise<TorrentFile[]> {
+    const params = new URLSearchParams({ hash });
+    const response = await this.fetchWithReauth(() =>
+      fetch(`${this.url}/api/v2/torrents/files?${params}`, {
+        headers: { Cookie: this.cookieHeader },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      }),
+    );
+
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`qBittorrent getTorrentFiles failed: HTTP ${response.status}`);
+    }
+
+    let files: Array<{ name: string; size: number }>;
+    try {
+      files = (await response.json()) as Array<{ name: string; size: number }>;
+    } catch {
+      throw new Error("qBittorrent getTorrentFiles returned invalid JSON");
+    }
+    return files.map((f) => ({ name: f.name, size: f.size }));
   }
 
   /** Fetch global transfer stats (download/upload rates). Re-authenticates on 403. */

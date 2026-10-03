@@ -24,6 +24,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     outageSpeedFloorBytes: 1024,
     outageMinActiveDownloading: 3,
     importRejectEnabled: false,
+    badReleaseEnabled: false,
     taste: null,
     dryRun: true,
     logLevel: "silent",
@@ -68,6 +69,7 @@ function createMockQbit() {
     getTorrent: mock.fn(async (): Promise<QBitTorrent | null> => null),
     getTransferInfo: mock.fn(async () => ({ dl_info_speed: 5_000_000, up_info_speed: 0 })),
     deleteTorrent: mock.fn(async (): Promise<void> => {}),
+    getTorrentFiles: mock.fn(async (): Promise<Array<{ name: string; size: number }>> => []),
     login: mock.fn(async (): Promise<void> => {}),
   };
 }
@@ -811,3 +813,80 @@ describe("Monitor.scanImportRejects", () => {
     assert.equal(mockArr.removeRejected.mock.callCount(), 1);
   });
 });
+
+describe("Monitor.scanBadReleases", () => {
+  const MB = 1024 * 1024;
+  const fake = [{ name: "The Librarians (2025) 1080p.WEB.h264.iso", size: 1153 * MB }];
+  const good = [{ name: "Show.S01E01.1080p.mkv", size: 900 * MB }];
+  const downloading = (o: Partial<QBitTorrent> = {}) => makeTorrent({ state: "downloading", hash: "abc123", ...o });
+
+  function setup(files: Array<{ name: string; size: number }>, opts: { dryRun?: boolean; queue?: ArrQueueRecord[] } = {}) {
+    const mockQbit = createMockQbit();
+    mockQbit.getTorrentFiles.mock.mockImplementation(async () => files);
+    const mockArr = createMockArr();
+    mockArr.getQueueItems.mock.mockImplementation(async () => opts.queue ?? [makeQueueRecord({ id: 42, downloadId: "ABC123" })]);
+    const config = makeConfig({ dryRun: opts.dryRun ?? false, badReleaseEnabled: true });
+    const monitor = new Monitor(mockQbit as any, new Map([["sonarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+    return { mockQbit, mockArr, monitor };
+  }
+
+  it("removes a fake via the *arr queue: delete + blocklist + re-search", async () => {
+    const { mockQbit, mockArr, monitor } = setup(fake);
+    await monitor.scanBadReleases([downloading()]);
+    assert.equal(mockArr.removeRejected.mock.callCount(), 1);
+    assert.deepEqual(mockArr.removeRejected.mock.calls[0].arguments, [42, true]);
+    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
+  });
+
+  it("falls back to deleting the torrent when it isn't in an *arr queue", async () => {
+    const { mockQbit, mockArr, monitor } = setup(fake, { queue: [] });
+    await monitor.scanBadReleases([downloading()]);
+    assert.equal(mockArr.removeRejected.mock.callCount(), 0);
+    assert.deepEqual(mockQbit.deleteTorrent.mock.calls[0].arguments, ["abc123", true]);
+  });
+
+  it("leaves good releases alone and only inspects each torrent once", async () => {
+    const { mockQbit, mockArr, monitor } = setup(good);
+    await monitor.scanBadReleases([downloading()]);
+    await monitor.scanBadReleases([downloading()]);
+    assert.equal(mockQbit.getTorrentFiles.mock.callCount(), 1);
+    assert.equal(mockArr.removeRejected.mock.callCount(), 0);
+    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
+  });
+
+  it("changes nothing in dry run", async () => {
+    const { mockQbit, mockArr, monitor } = setup(fake, { dryRun: true });
+    await monitor.scanBadReleases([downloading()]);
+    assert.equal(mockArr.removeRejected.mock.callCount(), 0);
+    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
+  });
+
+  it("skips torrents still fetching metadata and categories it doesn't own", async () => {
+    const { mockQbit, monitor } = setup(fake);
+    await monitor.scanBadReleases([downloading({ state: "metaDL" }), downloading({ hash: "zzz", category: "lidarr" })]);
+    assert.equal(mockQbit.getTorrentFiles.mock.callCount(), 0);
+  });
+
+  it("does not judge a torrent with an empty file list yet (re-checks next cycle)", async () => {
+    const { mockQbit, mockArr, monitor } = setup([]);
+    await monitor.scanBadReleases([downloading()]);
+    await monitor.scanBadReleases([downloading()]);
+    assert.equal(mockQbit.getTorrentFiles.mock.callCount(), 2);
+    assert.equal(mockArr.removeRejected.mock.callCount(), 0);
+  });
+
+  it("respects the per-cycle limit", async () => {
+    const { mockArr, monitor } = setup(fake, { queue: [makeQueueRecord({ id: 1, downloadId: "A1" }), makeQueueRecord({ id: 2, downloadId: "A2" })] });
+    await monitor.scanBadReleases([downloading({ hash: "a1" }), downloading({ hash: "a2" })], 1);
+    assert.equal(mockArr.removeRejected.mock.callCount(), 1);
+  });
+
+  it("retries next cycle if the removal fails", async () => {
+    const { mockQbit, mockArr, monitor } = setup(fake);
+    mockArr.removeRejected.mock.mockImplementation(async () => { throw new Error("HTTP 500"); });
+    await monitor.scanBadReleases([downloading()]);
+    await monitor.scanBadReleases([downloading()]);
+    assert.equal(mockQbit.getTorrentFiles.mock.callCount(), 2);
+  });
+});
+

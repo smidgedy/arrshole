@@ -79,6 +79,7 @@ All configuration is via environment variables in `.env`.
 | `OUTAGE_SPEED_FLOOR_BYTES` | No | `1024` | Global DL rate (B/s) at or below which the client counts as "not downloading" |
 | `OUTAGE_MIN_ACTIVE` | No | `3` | Minimum torrents in a downloading state before the outage guard can engage |
 | `IMPORT_REJECT` | No | `false` | Set to `true` to reap *arr import-rejections (see below) |
+| `BAD_RELEASE` | No | `false` | Set to `true` to remove + blocklist fake/malicious downloads (see below) |
 | `TASTE` | No | `false` | Set to `true` to enable the junk tagger (see below) |
 | `TASTE_INTERVAL_HOURS` | No | `24` | How often the taste model runs |
 | `TASTE_TIMEOUT_MINUTES` | No | `30` | Kill the model run if it takes longer |
@@ -154,6 +155,12 @@ applies. To clear the current backlog immediately without waiting for poll cycle
 ```bash
 node dist/index.js --now --rejects        # DRY_RUN=true previews; false acts
 ```
+
+### Bad-release reaper
+
+Opt-in (`BAD_RELEASE=true`). Fake releases are common: a "movie" that is really a disc image wrapping a padded `.exe`, or a show that arrives with an installer next to the video. Each poll, arrshole looks at the file list of every Sonarr/Radarr download once qBittorrent has its metadata, and treats it as bad if it contains any executable, script or shortcut (`.exe`, `.scr`, `.lnk`, `.bat`, `.msi`, `.ps1`, ...), if its main file is a disc image (`.iso`, `.img`, `.dmg`, ...), or if it has no video at all. The tiny `RARBG_DO_NOT_MIRROR.exe` decoy that genuine old RARBG releases carry is allowed.
+
+A bad release is removed through the *arr queue (`removeFromClient=true`, `blocklist=true`), so the download and its files are deleted, **that specific release is blocklisted**, and the app searches for another. If the download isn't in an *arr queue, the torrent and its files are deleted from qBittorrent directly (there's nothing to blocklist against). Clean releases are inspected once. `DRY_RUN` and `MAX_ACTIONS_PER_CYCLE` apply.
 
 ### Junk tagger
 

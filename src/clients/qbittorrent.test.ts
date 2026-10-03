@@ -318,4 +318,19 @@ describe("QBitClient", () => {
       await assert.rejects(() => client.deleteTorrent("abc123", true), /deleteTorrent failed.*500/);
     });
   });
+
+  describe("getTorrentFiles()", () => {
+    it("returns name and size for each file", async () => {
+      mockFetch.mock.mockImplementation(async (url: any) => {
+        const u = String(url);
+        if (u.includes("/auth/login")) return new Response("Ok.", { status: 200, headers: { "set-cookie": "SID=abc; path=/" } });
+        assert.ok(u.includes("/api/v2/torrents/files?hash=deadbeef"));
+        return new Response(JSON.stringify([{ name: "a/b.mkv", size: 123, progress: 0.5, priority: 1 }]), { status: 200 });
+      });
+      const client = new QBitClient("http://localhost:8080", "u", "p", makeSilentLogger());
+      await client.login();
+      assert.deepEqual(await client.getTorrentFiles("deadbeef"), [{ name: "a/b.mkv", size: 123 }]);
+    });
+  });
 });
+

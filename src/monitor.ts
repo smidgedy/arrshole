@@ -3,8 +3,9 @@ import type { Config } from "./config.js";
 import type { ArrClient } from "./clients/arr-client.js";
 import type { QBitClient } from "./clients/qbittorrent.js";
 import { StateTracker } from "./state-tracker.js";
-import { STUCK_ELIGIBLE_STATES, ACTIVE_DOWNLOAD_STATES } from "./types.js";
+import { STUCK_ELIGIBLE_STATES, ACTIVE_DOWNLOAD_STATES, METADATA_STATES, type QBitTorrent } from "./types.js";
 import { classifyReject, aggregateRejects } from "./reject-classifier.js";
+import { classifyRelease } from "./release-inspector.js";
 
 /**
  * Core polling loop. Detects stuck torrents, notifies *arr apps to blocklist
@@ -16,6 +17,8 @@ export class Monitor {
   private running = false;
   private firstCycle = true;
   private pollPromise: Promise<void> | null = null;
+  /** Torrents already judged clean by the bad-release reaper (file lists don't change). */
+  private inspectedReleases = new Set<string>();
 
   constructor(
     private qbit: QBitClient,
@@ -116,6 +119,14 @@ export class Monitor {
         await this.scanImportRejects(this.config.maxActionsPerCycle);
       } catch (err) {
         this.logger.error({ err }, "Import-rejection scan failed");
+      }
+    }
+
+    if (this.config.badReleaseEnabled) {
+      try {
+        await this.scanBadReleases(torrents, this.config.maxActionsPerCycle);
+      } catch (err) {
+        this.logger.error({ err }, "Bad-release scan failed");
       }
     }
 
@@ -474,6 +485,98 @@ export class Monitor {
         { acted, skipped, dryRun: this.config.dryRun },
         "Import-rejection scan complete",
       );
+    }
+  }
+
+  /**
+   * Bad-release reaper. Inspects the file list of each Sonarr/Radarr download once its
+   * metadata is known, and removes fakes: anything carrying an executable/script, a
+   * disc-image payload, or no video at all (see release-inspector). Removal goes through
+   * the *arr queue (removeFromClient + blocklist + re-search) so that specific release
+   * is never grabbed again; if the download isn't in an *arr queue, the torrent and its
+   * files are deleted from qBittorrent directly (nothing to blocklist against).
+   *
+   * @param limit  Max removals this pass (circuit breaker). Undefined = unlimited.
+   */
+  async scanBadReleases(torrents: QBitTorrent[], limit?: number): Promise<void> {
+    let acted = 0;
+    let inspected = 0;
+    const queues = new Map<string, Awaited<ReturnType<ArrClient["getQueueItems"]>>>();
+
+    for (const t of torrents) {
+      const app = this.categoryMap.get(t.category);
+      if (app !== "sonarr" && app !== "radarr") continue;
+      if (METADATA_STATES.has(t.state)) continue;
+      if (this.inspectedReleases.has(t.hash)) continue;
+
+      let files;
+      try {
+        files = await this.qbit.getTorrentFiles(t.hash);
+      } catch (err) {
+        this.logger.error({ hash: t.hash, name: t.name, err }, "Bad-release scan: failed to list torrent files");
+        continue;
+      }
+      if (files.length === 0) continue; // metadata not ready yet
+      inspected++;
+
+      const verdict = classifyRelease(files);
+      if (!verdict.bad) {
+        this.inspectedReleases.add(t.hash);
+        continue;
+      }
+
+      if (limit !== undefined && acted >= limit) {
+        this.logger.warn({ limit }, "Bad-release scan: circuit breaker reached — remaining items deferred to next cycle");
+        return;
+      }
+
+      const arrClient = this.arrClients.get(app);
+      let queueItem;
+      if (arrClient) {
+        if (!queues.has(app)) {
+          try {
+            queues.set(app, await arrClient.getQueueItems());
+          } catch (err) {
+            this.logger.error({ app, err }, "Bad-release scan: failed to fetch queue — will retry next cycle");
+            continue;
+          }
+        }
+        queueItem = queues.get(app)!.find((q) => q.downloadId?.toUpperCase() === t.hash.toUpperCase());
+      }
+
+      if (this.config.dryRun) {
+        this.logger.warn(
+          { app, name: t.name, hash: t.hash, reason: verdict.reason, inArrQueue: Boolean(queueItem) },
+          queueItem
+            ? "[DRY RUN] Would remove bad release via *arr: delete download + files, blocklist, re-search"
+            : "[DRY RUN] Would delete bad torrent + files from qBittorrent (not in an *arr queue)",
+        );
+        this.inspectedReleases.add(t.hash);
+        acted++;
+        continue;
+      }
+
+      try {
+        if (queueItem && arrClient) {
+          await arrClient.removeRejected(queueItem.id, true);
+        } else {
+          await this.qbit.deleteTorrent(t.hash, true);
+        }
+        this.inspectedReleases.add(t.hash);
+        acted++;
+        this.logger.warn(
+          { action: "bad_release_reaped", app, name: t.name, hash: t.hash, reason: verdict.reason, blocklisted: Boolean(queueItem) },
+          queueItem
+            ? `Removed bad release via ${arrClient!.name}: deleted, blocklisted, searching for replacement`
+            : "Deleted bad torrent from qBittorrent (not in an *arr queue, so not blocklisted)",
+        );
+      } catch (err) {
+        this.logger.error({ app, name: t.name, hash: t.hash, err }, "Failed to remove bad release — will retry next cycle");
+      }
+    }
+
+    if (acted > 0) {
+      this.logger.info({ acted, inspected, dryRun: this.config.dryRun }, "Bad-release scan complete");
     }
   }
 }
