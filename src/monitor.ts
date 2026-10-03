@@ -5,7 +5,9 @@ import type { QBitClient } from "./clients/qbittorrent.js";
 import { StateTracker } from "./state-tracker.js";
 import { STUCK_ELIGIBLE_STATES, ACTIVE_DOWNLOAD_STATES, METADATA_STATES, type QBitTorrent } from "./types.js";
 import { classifyReject, aggregateRejects } from "./reject-classifier.js";
-import { classifyRelease } from "./release-inspector.js";
+import { classifyRelease, kindForApp } from "./release-inspector.js";
+import { cleanImportFolder, translatePath } from "./library-cleaner.js";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
 /**
  * Core polling loop. Detects stuck torrents, notifies *arr apps to blocklist
@@ -19,6 +21,8 @@ export class Monitor {
   private pollPromise: Promise<void> | null = null;
   /** Torrents already judged clean by the bad-release reaper (file lists don't change). */
   private inspectedReleases = new Set<string>();
+  /** Library cleanup position when no state file is configured (tests). */
+  private memCleanupState: Record<string, number> = {};
 
   constructor(
     private qbit: QBitClient,
@@ -127,6 +131,14 @@ export class Monitor {
         await this.scanBadReleases(torrents, this.config.maxActionsPerCycle);
       } catch (err) {
         this.logger.error({ err }, "Bad-release scan failed");
+      }
+    }
+
+    if (this.config.libraryCleanupEnabled) {
+      try {
+        await this.scanLibraryImports();
+      } catch (err) {
+        this.logger.error({ err }, "Library cleanup failed");
       }
     }
 
@@ -489,25 +501,26 @@ export class Monitor {
   }
 
   /**
-   * Bad-release reaper. Inspects the file list of each Sonarr/Radarr download once its
-   * metadata is known, and removes fakes: anything carrying an executable/script, a
-   * disc-image payload, or no video at all (see release-inspector). Removal goes through
-   * the *arr queue (removeFromClient + blocklist + re-search) so that specific release
-   * is never grabbed again; if the download isn't in an *arr queue, the torrent and its
-   * files are deleted from qBittorrent directly (nothing to blocklist against).
+   * Bad-release reaper. Once qBittorrent knows a download's file list, check it contains at
+   * least one file of the type its *arr imports (non-sample video for Sonarr/Radarr, audio for
+   * Lidarr; disc images don't count). If not, remove it through the *arr queue
+   * (removeFromClient + blocklist + re-search) so that exact release is never grabbed again.
+   * Downloads that aren't in an *arr queue are left alone.
    *
    * @param limit  Max removals this pass (circuit breaker). Undefined = unlimited.
    */
   async scanBadReleases(torrents: QBitTorrent[], limit?: number): Promise<void> {
     let acted = 0;
-    let inspected = 0;
     const queues = new Map<string, Awaited<ReturnType<ArrClient["getQueueItems"]>>>();
 
     for (const t of torrents) {
       const app = this.categoryMap.get(t.category);
-      if (app !== "sonarr" && app !== "radarr") continue;
+      const kind = app ? kindForApp(app) : null;
+      if (!app || !kind) continue;
       if (METADATA_STATES.has(t.state)) continue;
       if (this.inspectedReleases.has(t.hash)) continue;
+      const arrClient = this.arrClients.get(app);
+      if (!arrClient) continue;
 
       let files;
       try {
@@ -517,10 +530,24 @@ export class Monitor {
         continue;
       }
       if (files.length === 0) continue; // metadata not ready yet
-      inspected++;
 
-      const verdict = classifyRelease(files);
+      const verdict = classifyRelease(files, kind);
       if (!verdict.bad) {
+        this.inspectedReleases.add(t.hash);
+        continue;
+      }
+
+      if (!queues.has(app)) {
+        try {
+          queues.set(app, await arrClient.getQueueItems());
+        } catch (err) {
+          this.logger.error({ app, err }, "Bad-release scan: failed to fetch queue — will retry next cycle");
+          continue;
+        }
+      }
+      const queueItem = queues.get(app)!.find((q) => q.downloadId?.toUpperCase() === t.hash.toUpperCase());
+      if (!queueItem) {
+        this.logger.debug({ app, name: t.name, reason: verdict.reason }, "Bad-release scan: not in an *arr queue — ignoring");
         this.inspectedReleases.add(t.hash);
         continue;
       }
@@ -530,53 +557,98 @@ export class Monitor {
         return;
       }
 
-      const arrClient = this.arrClients.get(app);
-      let queueItem;
-      if (arrClient) {
-        if (!queues.has(app)) {
-          try {
-            queues.set(app, await arrClient.getQueueItems());
-          } catch (err) {
-            this.logger.error({ app, err }, "Bad-release scan: failed to fetch queue — will retry next cycle");
-            continue;
-          }
-        }
-        queueItem = queues.get(app)!.find((q) => q.downloadId?.toUpperCase() === t.hash.toUpperCase());
-      }
-
       if (this.config.dryRun) {
-        this.logger.warn(
-          { app, name: t.name, hash: t.hash, reason: verdict.reason, inArrQueue: Boolean(queueItem) },
-          queueItem
-            ? "[DRY RUN] Would remove bad release via *arr: delete download + files, blocklist, re-search"
-            : "[DRY RUN] Would delete bad torrent + files from qBittorrent (not in an *arr queue)",
-        );
+        this.logger.warn({ app, name: t.name, hash: t.hash, reason: verdict.reason },
+          "[DRY RUN] Would remove bad release via *arr: delete download + files, blocklist, re-search");
         this.inspectedReleases.add(t.hash);
         acted++;
         continue;
       }
 
       try {
-        if (queueItem && arrClient) {
-          await arrClient.removeRejected(queueItem.id, true);
-        } else {
-          await this.qbit.deleteTorrent(t.hash, true);
-        }
+        await arrClient.removeRejected(queueItem.id, true);
         this.inspectedReleases.add(t.hash);
         acted++;
-        this.logger.warn(
-          { action: "bad_release_reaped", app, name: t.name, hash: t.hash, reason: verdict.reason, blocklisted: Boolean(queueItem) },
-          queueItem
-            ? `Removed bad release via ${arrClient!.name}: deleted, blocklisted, searching for replacement`
-            : "Deleted bad torrent from qBittorrent (not in an *arr queue, so not blocklisted)",
-        );
+        this.logger.warn({ action: "bad_release_reaped", app, name: t.name, hash: t.hash, reason: verdict.reason },
+          `Removed bad release via ${arrClient.name}: deleted, blocklisted, searching for replacement`);
       } catch (err) {
         this.logger.error({ app, name: t.name, hash: t.hash, err }, "Failed to remove bad release — will retry next cycle");
       }
     }
 
     if (acted > 0) {
-      this.logger.info({ acted, inspected, dryRun: this.config.dryRun }, "Bad-release scan complete");
+      this.logger.info({ acted, dryRun: this.config.dryRun }, "Bad-release scan complete");
+    }
+  }
+
+  /**
+   * Post-import library cleanup. Reads each *arr's import history since the last pass, maps
+   * each imported file's folder into this host's filesystem, and removes malware-carrying file
+   * types and release cruft that landed next to it (see library-cleaner). On the very first
+   * run it only records where history currently ends, so it never sweeps old imports.
+   */
+  async scanLibraryImports(): Promise<void> {
+    const state = this.readCleanupState();
+    let budget = this.config.libraryCleanupMaxFiles;
+    let removed = 0;
+
+    for (const [app, arrClient] of this.arrClients) {
+      const kind = kindForApp(app);
+      if (!kind) continue;
+      const lastId = state[app];
+      let result;
+      try {
+        result = await arrClient.getImportsSince(lastId ?? Number.MAX_SAFE_INTEGER);
+      } catch (err) {
+        this.logger.error({ app, err }, "Library cleanup: failed to read import history");
+        continue;
+      }
+      if (lastId === undefined) {
+        // First run: start from the newest history entry rather than sweeping the past.
+        const peek = await arrClient.getImportsSince(0).catch(() => null);
+        state[app] = peek?.maxId ?? 0;
+        continue;
+      }
+      for (const imp of result.imports.sort((a, b) => a.id - b.id)) {
+        if (budget <= 0) break;
+        const local = translatePath(imp.importedPath, this.config.libraryPathMap);
+        if (!local) {
+          this.logger.warn({ app, path: imp.importedPath }, "Library cleanup: no LIBRARY_PATH_MAP rule for path — skipped");
+          state[app] = imp.id;
+          continue;
+        }
+        const n = cleanImportFolder(local, kind, { dryRun: this.config.dryRun, budget, logger: this.logger, app });
+        removed += n;
+        budget -= n;
+        state[app] = imp.id;
+      }
+      if (budget > 0) state[app] = Math.max(state[app] ?? 0, result.maxId);
+    }
+
+    this.writeCleanupState(state);
+    if (removed > 0) {
+      this.logger.info({ removed, dryRun: this.config.dryRun }, "Library cleanup complete");
+    }
+  }
+
+  private readCleanupState(): Record<string, number> {
+    if (!this.config.libraryCleanupStateFile) return { ...this.memCleanupState };
+    try {
+      return JSON.parse(readFileSync(this.config.libraryCleanupStateFile, "utf8")) as Record<string, number>;
+    } catch {
+      return {};
+    }
+  }
+
+  private writeCleanupState(state: Record<string, number>): void {
+    this.memCleanupState = { ...state };
+    if (!this.config.libraryCleanupStateFile) return;
+    try {
+      const tmp = `${this.config.libraryCleanupStateFile}.tmp`;
+      writeFileSync(tmp, JSON.stringify(state) + "\n", { mode: 0o600 });
+      renameSync(tmp, this.config.libraryCleanupStateFile);
+    } catch (err) {
+      this.logger.error({ err }, "Library cleanup: failed to persist state");
     }
   }
 }

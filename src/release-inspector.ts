@@ -4,56 +4,52 @@ export interface TorrentFile {
   size: number;
 }
 
+export type MediaKind = "video" | "audio";
+
 export type ReleaseVerdict = { bad: false } | { bad: true; reason: string };
 
-/** Never legitimate in a TV/movie release: executables, scripts, shortcuts, installers. */
-const DANGEROUS = new Set([
-  "exe", "scr", "com", "pif", "lnk", "bat", "cmd", "msi", "msp", "vbs", "vbe",
-  "js", "jse", "wsf", "wsh", "ps1", "hta", "cpl", "jar", "reg", "apk", "dll",
+/** What each *arr imports. Disc images (.iso etc.) deliberately don't count as video. */
+export const VIDEO_EXTS = new Set([
+  "mkv", "mp4", "m4v", "avi", "ts", "m2ts", "mts", "mov", "wmv", "webm", "mpg", "mpeg", "vob", "divx", "flv", "ogm",
+]);
+export const AUDIO_EXTS = new Set([
+  "flac", "mp3", "m4a", "m4b", "aac", "ogg", "oga", "opus", "wav", "wv", "ape", "alac", "aiff", "aif", "dsf", "dff", "wma", "mka",
 ]);
 
-/** Disc images: the classic wrapper for a padded fake (an .exe inside an .iso). */
-const DISC_IMAGES = new Set(["iso", "img", "dmg", "nrg", "mdf", "vhd", "vhdx"]);
+/** Sample clips are video, but a release that is only a sample isn't a real release. */
+export const SAMPLE_MAX_BYTES = 500 * 1024 * 1024;
 
-const VIDEO = new Set(["mkv", "mp4", "m4v", "avi", "ts", "m2ts", "mov", "wmv", "webm", "mpg", "mpeg", "vob"]);
-
-/**
- * Genuine (old) RARBG releases ship a tiny decoy executable. It is never imported, so a
- * real release carrying it is fine; anything bigger with that name is not.
- */
-const ALLOWED_DECOYS = new Map([["rarbg_do_not_mirror.exe", 1024 * 1024]]);
-
-function ext(name: string): string {
-  const base = name.split(/[\\/]/).pop() ?? name;
+export function ext(name: string): string {
+  const base = baseName(name);
   const dot = base.lastIndexOf(".");
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
 }
 
+export function baseName(name: string): string {
+  return name.split(/[\\/]/).pop() ?? name;
+}
+
+export function isSample(name: string, size: number): boolean {
+  return /(^|[\W_])sample([\W_]|$)/i.test(name) && size < SAMPLE_MAX_BYTES;
+}
+
+export function kindForApp(app: string): MediaKind | null {
+  if (app === "sonarr" || app === "radarr") return "video";
+  if (app === "lidarr") return "audio";
+  return null;
+}
+
 /**
- * Decide whether a TV/movie torrent is a fake or malicious release, from its file list alone.
- * Bad if it contains any executable/script (bar the known RARBG decoy), if its main payload is
- * a disc image, or if it contains no video at all.
+ * A release is bad if it doesn't contain at least one file of the type its *arr imports:
+ * a (non-sample) video file for Sonarr/Radarr, an audio file for Lidarr.
  */
-export function classifyRelease(files: TorrentFile[]): ReleaseVerdict {
+export function classifyRelease(files: TorrentFile[], kind: MediaKind): ReleaseVerdict {
   if (files.length === 0) return { bad: false }; // metadata not available yet
 
-  for (const f of files) {
-    const base = (f.name.split(/[\\/]/).pop() ?? f.name).toLowerCase();
-    const decoyLimit = ALLOWED_DECOYS.get(base);
-    if (decoyLimit !== undefined && f.size <= decoyLimit) continue;
-    if (DANGEROUS.has(ext(f.name))) {
-      return { bad: true, reason: `contains executable/script: ${f.name}` };
-    }
-  }
+  const wanted = kind === "video" ? VIDEO_EXTS : AUDIO_EXTS;
+  const ok = files.some((f) => wanted.has(ext(f.name)) && !(kind === "video" && isSample(f.name, f.size)));
+  if (ok) return { bad: false };
 
   const largest = files.reduce((a, b) => (b.size > a.size ? b : a));
-  if (DISC_IMAGES.has(ext(largest.name))) {
-    return { bad: true, reason: `main file is a disc image: ${largest.name}` };
-  }
-
-  if (!files.some((f) => VIDEO.has(ext(f.name)))) {
-    return { bad: true, reason: `no video files (largest: ${largest.name})` };
-  }
-
-  return { bad: false };
+  return { bad: true, reason: `no ${kind} file in release (largest file: ${baseName(largest.name)})` };
 }

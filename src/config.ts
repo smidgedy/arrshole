@@ -36,8 +36,14 @@ export interface Config {
   outageSpeedFloorBytes: number;
   outageMinActiveDownloading: number;
   importRejectEnabled: boolean;
-  /** Bad-release reaper (opt-in, BAD_RELEASE=true): remove + blocklist fake/malicious downloads. */
+  /** Bad-release reaper (on unless BAD_RELEASE=false): remove + blocklist releases with no media of the right type. */
   badReleaseEnabled: boolean;
+  /** Post-import library cleanup (on unless LIBRARY_CLEANUP=false). */
+  libraryCleanupEnabled: boolean;
+  /** "FROM=TO" prefix rules mapping *arr paths to this host's paths, e.g. J:\=/mnt/j/ */
+  libraryPathMap: Array<[string, string]>;
+  libraryCleanupMaxFiles: number;
+  libraryCleanupStateFile: string;
   /** Junk tagger (opt-in, TASTE=true): null when disabled. */
   taste: TasteConfig | null;
   dryRun: boolean;
@@ -209,9 +215,17 @@ export function loadConfig(): Config {
   // than the stalled/metaDL detection.
   const importRejectEnabled = process.env.IMPORT_REJECT?.toLowerCase() === "true";
 
-  // Bad-release reaper: inspect each Sonarr/Radarr download's file list and remove + blocklist
-  // fakes (executables, disc-image payloads, no video). Opt-in; DRY_RUN applies.
-  const badReleaseEnabled = process.env.BAD_RELEASE?.toLowerCase() === "true";
+  // Bad-release reaper + post-import library cleanup. Both on by default; DRY_RUN applies.
+  const badReleaseEnabled = process.env.BAD_RELEASE?.toLowerCase() !== "false";
+  const libraryCleanupEnabled = process.env.LIBRARY_CLEANUP?.toLowerCase() !== "false";
+  const libraryPathMap = (process.env.LIBRARY_PATH_MAP || "J:\\=/mnt/j/")
+    .split(";").map((r) => r.trim()).filter(Boolean)
+    .map((r) => {
+      const i = r.indexOf("=");
+      if (i <= 0) throw new Error(`LIBRARY_PATH_MAP rule must be FROM=TO, got "${r}"`);
+      return [r.slice(0, i), r.slice(i + 1)] as [string, string];
+    });
+  const libraryCleanupMaxFiles = parseIntStrict(process.env.LIBRARY_CLEANUP_MAX_FILES || "50", "LIBRARY_CLEANUP_MAX_FILES", 1);
 
   // Junk tagger: periodically runs the taste model and applies its `junk` tag plan.
   // Opt-in; tag changes still honour DRY_RUN.
@@ -245,6 +259,10 @@ export function loadConfig(): Config {
     outageMinActiveDownloading,
     importRejectEnabled,
     badReleaseEnabled,
+    libraryCleanupEnabled,
+    libraryPathMap,
+    libraryCleanupMaxFiles,
+    libraryCleanupStateFile: process.env.LIBRARY_CLEANUP_STATE_FILE || "./library-cleanup-state.json",
     taste,
     dryRun,
     logLevel: process.env.LOG_LEVEL || "info",

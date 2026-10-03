@@ -8,3 +8,4 @@ taste/.venv
 taste-data/
 __pycache__/
 *.egg-info/
+library-cleanup-state.json

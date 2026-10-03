@@ -325,4 +325,28 @@ export class ArrClient {
     }
     await drain(response);
   }
+
+  /**
+   * Import events newer than `afterId`, newest first (one page of 100 is plenty at a 60s poll).
+   * Covers Sonarr/Radarr `downloadFolderImported` and Lidarr `trackFileImported`.
+   */
+  async getImportsSince(afterId: number): Promise<{ maxId: number; imports: Array<{ id: number; importedPath: string }> }> {
+    const url = this.apiUrl("/history?page=1&pageSize=100&sortKey=date&sortDirection=descending");
+    const response = await fetch(url, { headers: this.headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT) });
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`${this.name} history fetch failed: HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as { records: Array<{ id: number; eventType: string; data?: Record<string, string> }> };
+    let maxId = afterId;
+    const imports: Array<{ id: number; importedPath: string }> = [];
+    for (const r of data.records ?? []) {
+      maxId = Math.max(maxId, r.id);
+      if (r.id <= afterId || !/Imported$/.test(r.eventType)) continue;
+      const importedPath = r.data?.importedPath;
+      if (importedPath) imports.push({ id: r.id, importedPath });
+    }
+    return { maxId, imports };
+  }
 }
+

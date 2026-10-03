@@ -25,6 +25,10 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     outageMinActiveDownloading: 3,
     importRejectEnabled: false,
     badReleaseEnabled: false,
+    libraryCleanupEnabled: false,
+    libraryPathMap: [["J:\\", "/mnt/j/"]],
+    libraryCleanupMaxFiles: 50,
+    libraryCleanupStateFile: "",
     taste: null,
     dryRun: true,
     logLevel: "silent",
@@ -81,6 +85,7 @@ function createMockArr(name = "Sonarr") {
     getRejectRecords: mock.fn(async (): Promise<ArrRejectRecord[]> => []),
     removeAndSearch: mock.fn(async (): Promise<void> => {}),
     removeRejected: mock.fn(async (): Promise<void> => {}),
+    getImportsSince: mock.fn(async (_after: number) => ({ maxId: 0, imports: [] as Array<{ id: number; importedPath: string }> })),
     markFailed: mock.fn(async (): Promise<void> => {}),
   };
 }
@@ -817,7 +822,7 @@ describe("Monitor.scanImportRejects", () => {
 describe("Monitor.scanBadReleases", () => {
   const MB = 1024 * 1024;
   const fake = [{ name: "The Librarians (2025) 1080p.WEB.h264.iso", size: 1153 * MB }];
-  const good = [{ name: "Show.S01E01.1080p.mkv", size: 900 * MB }];
+  const good = [{ name: "Show.S01E01.1080p.mkv", size: 900 * MB }, { name: "Installer.exe", size: 2 * MB }];
   const downloading = (o: Partial<QBitTorrent> = {}) => makeTorrent({ state: "downloading", hash: "abc123", ...o });
 
   function setup(files: Array<{ name: string; size: number }>, opts: { dryRun?: boolean; queue?: ArrQueueRecord[] } = {}) {
@@ -830,49 +835,45 @@ describe("Monitor.scanBadReleases", () => {
     return { mockQbit, mockArr, monitor };
   }
 
-  it("removes a fake via the *arr queue: delete + blocklist + re-search", async () => {
+  it("removes a release with no video via the *arr queue: delete + blocklist + re-search", async () => {
     const { mockQbit, mockArr, monitor } = setup(fake);
     await monitor.scanBadReleases([downloading()]);
-    assert.equal(mockArr.removeRejected.mock.callCount(), 1);
     assert.deepEqual(mockArr.removeRejected.mock.calls[0].arguments, [42, true]);
     assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
   });
 
-  it("falls back to deleting the torrent when it isn't in an *arr queue", async () => {
+  it("ignores bad downloads that aren't in an *arr queue", async () => {
     const { mockQbit, mockArr, monitor } = setup(fake, { queue: [] });
     await monitor.scanBadReleases([downloading()]);
     assert.equal(mockArr.removeRejected.mock.callCount(), 0);
-    assert.deepEqual(mockQbit.deleteTorrent.mock.calls[0].arguments, ["abc123", true]);
+    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
   });
 
-  it("leaves good releases alone and only inspects each torrent once", async () => {
+  it("leaves releases with real video alone (extras are the library cleaner's job) and inspects once", async () => {
     const { mockQbit, mockArr, monitor } = setup(good);
     await monitor.scanBadReleases([downloading()]);
     await monitor.scanBadReleases([downloading()]);
     assert.equal(mockQbit.getTorrentFiles.mock.callCount(), 1);
     assert.equal(mockArr.removeRejected.mock.callCount(), 0);
-    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
   });
 
   it("changes nothing in dry run", async () => {
-    const { mockQbit, mockArr, monitor } = setup(fake, { dryRun: true });
+    const { mockArr, monitor } = setup(fake, { dryRun: true });
     await monitor.scanBadReleases([downloading()]);
     assert.equal(mockArr.removeRejected.mock.callCount(), 0);
-    assert.equal(mockQbit.deleteTorrent.mock.callCount(), 0);
   });
 
-  it("skips torrents still fetching metadata and categories it doesn't own", async () => {
+  it("skips torrents still fetching metadata and categories with no *arr", async () => {
     const { mockQbit, monitor } = setup(fake);
-    await monitor.scanBadReleases([downloading({ state: "metaDL" }), downloading({ hash: "zzz", category: "lidarr" })]);
+    await monitor.scanBadReleases([downloading({ state: "metaDL" }), downloading({ hash: "zzz", category: "movies-manual" })]);
     assert.equal(mockQbit.getTorrentFiles.mock.callCount(), 0);
   });
 
-  it("does not judge a torrent with an empty file list yet (re-checks next cycle)", async () => {
-    const { mockQbit, mockArr, monitor } = setup([]);
+  it("re-checks a torrent whose file list was empty", async () => {
+    const { mockQbit, monitor } = setup([]);
     await monitor.scanBadReleases([downloading()]);
     await monitor.scanBadReleases([downloading()]);
     assert.equal(mockQbit.getTorrentFiles.mock.callCount(), 2);
-    assert.equal(mockArr.removeRejected.mock.callCount(), 0);
   });
 
   it("respects the per-cycle limit", async () => {
@@ -890,3 +891,31 @@ describe("Monitor.scanBadReleases", () => {
   });
 });
 
+describe("Monitor.scanLibraryImports", () => {
+  it("first run only records where history ends; later runs clean new imports' folders", async () => {
+    const { mkdtempSync, writeFileSync, readdirSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "imp-"));
+    writeFileSync(join(root, "Film.mkv"), "v");
+    writeFileSync(join(root, "Codec.exe"), "x");
+    writeFileSync(join(root, "RARBG.txt"), "x");
+
+    const mockArr = createMockArr("Radarr");
+    let history = { maxId: 100, imports: [] as Array<{ id: number; importedPath: string }> };
+    mockArr.getImportsSince.mock.mockImplementation(async (after: number) => ({
+      maxId: history.maxId, imports: history.imports.filter((i) => i.id > after),
+    }));
+    const config = makeConfig({ dryRun: false, libraryCleanupEnabled: true, libraryPathMap: [["J:\\Movies\\", root + "/"]], categoryMap: new Map([["radarr", "radarr"]]) });
+    const monitor = new Monitor(createMockQbit() as any, new Map([["radarr", mockArr as any]]), config.categoryMap, config, makeSilentLogger(), new StateTracker());
+
+    history.imports = [{ id: 99, importedPath: "J:\\Movies\\Film.mkv" }];   // an old import
+    await monitor.scanLibraryImports();
+    assert.equal(readdirSync(root).length, 3, "first run must not sweep old imports");
+
+    history = { maxId: 101, imports: [...history.imports, { id: 101, importedPath: "J:\\Movies\\Film.mkv" }] };
+    await monitor.scanLibraryImports();
+    assert.deepEqual(readdirSync(root).sort(), ["Film.mkv"]);
+    rmSync(root, { recursive: true, force: true });
+  });
+});

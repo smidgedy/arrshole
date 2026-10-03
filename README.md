@@ -79,7 +79,10 @@ All configuration is via environment variables in `.env`.
 | `OUTAGE_SPEED_FLOOR_BYTES` | No | `1024` | Global DL rate (B/s) at or below which the client counts as "not downloading" |
 | `OUTAGE_MIN_ACTIVE` | No | `3` | Minimum torrents in a downloading state before the outage guard can engage |
 | `IMPORT_REJECT` | No | `false` | Set to `true` to reap *arr import-rejections (see below) |
-| `BAD_RELEASE` | No | `false` | Set to `true` to remove + blocklist fake/malicious downloads (see below) |
+| `BAD_RELEASE` | No | `true` | Remove + blocklist downloads with no media of the right type (see below) |
+| `LIBRARY_CLEANUP` | No | `true` | Remove malware types and cruft next to newly imported files (see below) |
+| `LIBRARY_PATH_MAP` | No | `J:\=/mnt/j/` | Map *arr paths to this host's paths for library cleanup |
+| `LIBRARY_CLEANUP_MAX_FILES` | No | `50` | Max files the library cleanup removes per poll |
 | `TASTE` | No | `false` | Set to `true` to enable the junk tagger (see below) |
 | `TASTE_INTERVAL_HOURS` | No | `24` | How often the taste model runs |
 | `TASTE_TIMEOUT_MINUTES` | No | `30` | Kill the model run if it takes longer |
@@ -156,11 +159,15 @@ applies. To clear the current backlog immediately without waiting for poll cycle
 node dist/index.js --now --rejects        # DRY_RUN=true previews; false acts
 ```
 
-### Bad-release reaper
+### Bad-release reaper and library cleanup
 
-Opt-in (`BAD_RELEASE=true`). Fake releases are common: a "movie" that is really a disc image wrapping a padded `.exe`, or a show that arrives with an installer next to the video. Each poll, arrshole looks at the file list of every Sonarr/Radarr download once qBittorrent has its metadata, and treats it as bad if it contains any executable, script or shortcut (`.exe`, `.scr`, `.lnk`, `.bat`, `.msi`, `.ps1`, ...), if its main file is a disc image (`.iso`, `.img`, `.dmg`, ...), or if it has no video at all. The tiny `RARBG_DO_NOT_MIRROR.exe` decoy that genuine old RARBG releases carry is allowed.
+On by default (`BAD_RELEASE=false` / `LIBRARY_CLEANUP=false` to turn off). `DRY_RUN` applies to both.
 
-A bad release is removed through the *arr queue (`removeFromClient=true`, `blocklist=true`), so the download and its files are deleted, **that specific release is blocklisted**, and the app searches for another. If the download isn't in an *arr queue, the torrent and its files are deleted from qBittorrent directly (there's nothing to blocklist against). Clean releases are inspected once. `DRY_RUN` and `MAX_ACTIONS_PER_CYCLE` apply.
+**At download.** As each Sonarr/Radarr/Lidarr download's file list becomes known, arrshole checks it contains at least one file of the type that *arr imports: a real video file for Sonarr/Radarr (disc images such as `.iso`, and lone sample clips, don't count) or an audio file for Lidarr. A release that doesn't is removed through the *arr queue (`removeFromClient=true`, `blocklist=true`): the download and its files are deleted, that exact release is blocklisted so it is never grabbed again, and the app searches for a replacement. Downloads that aren't in an *arr queue are ignored. `MAX_ACTIONS_PER_CYCLE` caps removals per poll.
+
+**After import.** arrshole follows each *arr's import history. For every newly imported file it looks in the library folder the file landed in and removes malware-carrying types (`.exe` `.com` `.bat` `.cmd` `.scr` `.lnk` `.msi` `.ps1` `.vbs` `.js` `.url` ...) and, for video libraries, release cruft the library never uses (`.txt` `.nfo` images, disc images, `.sfv`, sample clips). Video, subtitles and anything unrecognised are kept; Lidarr folders only lose malware types (cue sheets, logs and cover art stay). It only acts on imports that happen after it starts, never sweeps old history, and removes at most `LIBRARY_CLEANUP_MAX_FILES` (default 50) files per poll.
+
+*arr paths are mapped to this host with `LIBRARY_PATH_MAP` (`FROM=TO` prefix rules separated by `;`, default `J:\=/mnt/j/`). The service needs write access to those folders: add them to `ReadWritePaths` in `arrshole.service`. Position in the import history is kept in `LIBRARY_CLEANUP_STATE_FILE` (default `./library-cleanup-state.json`).
 
 ### Junk tagger
 
