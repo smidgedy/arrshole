@@ -18,6 +18,8 @@ export class Monitor {
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private firstCycle = true;
+  /** When the last poll cycle completed (ms since epoch); read by the health snapshot. */
+  lastCycleAt: number | null = null;
   private pollPromise: Promise<void> | null = null;
   /** Torrents already judged clean by the bad-release reaper (file lists don't change). */
   private inspectedReleases = new Set<string>();
@@ -44,6 +46,7 @@ export class Monitor {
       try {
         this.pollPromise = this.poll();
         await this.pollPromise;
+        this.lastCycleAt = Date.now();
       } catch (err) {
         this.logger.error(err, "Poll cycle failed");
       } finally {

@@ -90,6 +90,17 @@ All configuration is via environment variables in `.env`.
 | `TASTE_DIR` / `TASTE_PYTHON` | No | `./taste` / `.venv/bin/python` | Where the model package and its interpreter live |
 | `TASTE_STATE_FILE` | No | `./taste-data/arrshole-taste.json` | Last-run bookkeeping |
 | `PLEX_TOKEN` | No | — | Lets the model read your plex.tv watch history |
+| `PROWLARR_URL` / `PROWLARR_API_KEY` | No | — | Prowlarr, for the indexer doctor and health API |
+| `JACKETT_URL` / `JACKETT_API_KEY` | No | — | Jackett (Torznab API key only), tested and reported by the indexer doctor |
+| `INDEXER_DOCTOR` | No | `true` | Set to `false` to turn the indexer doctor off (it only runs when Prowlarr or Jackett is configured) |
+| `INDEXER_DOCTOR_INTERVAL_HOURS` | No | `6` | How often failing indexers are tested and repaired |
+| `HEALTH_PORT` | No | `9798` | Port for the read-only health API (`0` disables) |
+| `HEALTH_INTERVAL_SECONDS` | No | `60` | How often the health snapshot is rebuilt |
+| `FLARESOLVERR_URL` / `TDARR_URL` / `PLEX_URL` | No | qBittorrent host on `:8191` / `:8265` / `:32400` | Services checked by the health API (`off` skips one) |
+| `LANGUARRGE_URL` / `LANGUARRGE_DB` | No | `http://localhost:9799` / — | languarrge receiver, and its SQLite queue for queue depth |
+| `DRIVEPOOL_PATH` / `DRIVEPOOL_TARGET_FREE_GB` | No | `/mnt/j` / `1000` | Library volume and its free-space goal |
+| `TAILSCALE_ROUTER` / `LAN_GATEWAY` | No | — | `host:port` reachability targets for the network checks |
+| `NETSH_PATH` | No | — | Windows `netsh.exe` (WSL interop) to check portproxy rules point at the current WSL IP |
 | `DRY_RUN` | No | `true` | Set to `false` to enable destructive actions |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error`, `fatal` |
 | `STATE_FILE` | No | `./arrshole-state.json` | Path to persist tracking state across restarts |
@@ -199,6 +210,21 @@ Run the model alone (read-only, prints the plan JSON): `cd taste && RADARR_URL=.
 ### State persistence
 
 arrshole tracks when it first observes each torrent in a stalled state. This tracking is persisted to disk (at `STATE_FILE`, default `./arrshole-state.json`) so that stall timers survive service restarts. If a torrent resumes downloading, its timer is cleared. On startup, arrshole logs how many tracked entries were restored and how long ago the state was saved.
+
+### Indexer doctor
+
+On whenever Prowlarr or Jackett is configured. Every `INDEXER_DOCTOR_INTERVAL_HOURS` (default 6) it tests the Prowlarr indexers Prowlarr is currently backing off, plus any it saw failing last time, and repairs what code can fix:
+
+- **Cloudflare challenge**: adds the FlareSolverr proxy's tag to the indexer.
+- **Site moved** to another of the definition's own URLs: switches the indexer's base URL.
+
+A fix is only saved if the indexer then passes Prowlarr's own test. Login failures are flagged for a person straight away; anything else is flagged once it has failed for a day (a changed site layout needs an updated definition, which Prowlarr and Jackett fetch themselves). Jackett indexers are tested and reported but never changed. `DRY_RUN` applies. Results appear in the health API.
+
+### Health API
+
+A read-only snapshot of the whole media chain (indexers → *arrs → qBittorrent → storage → languarrge/Tdarr → Plex) and the network (internet, DNS, VPN leak check, torrent connectivity, Tailscale router, WSL port forwards, gateway), served at `GET :HEALTH_PORT/api/health` for the home dashboard. See [docs/health-api.md](docs/health-api.md).
+
+The VPN check compares the IP qBittorrent's peers see with the home WAN IP: if they match, torrent traffic is leaving outside PIA.
 
 ## One-shot mode
 

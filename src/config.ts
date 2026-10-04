@@ -22,6 +22,28 @@ export interface TasteConfig {
   stateFilePath: string;
 }
 
+export interface ServiceConfig {
+  url: string;
+  apiKey: string;
+}
+
+export interface HealthSettings {
+  port: number;
+  intervalMs: number;
+  jackettUrl: string | null;
+  flaresolverrUrl: string | null;
+  tdarrUrl: string | null;
+  plexUrl: string | null;
+  plexToken: string | null;
+  languarrgeUrl: string | null;
+  languarrgeDb: string | null;
+  drivepoolPath: string | null;
+  drivepoolTargetFreeBytes: number;
+  tailscaleRouter: { host: string; port: number } | null;
+  gateway: { host: string; port: number } | null;
+  netshPath: string | null;
+}
+
 export interface Config {
   qbit: { url: string; username: string; password: string };
   sonarr: ArrConfig | null;
@@ -44,6 +66,12 @@ export interface Config {
   libraryPathMap: Array<[string, string]>;
   libraryCleanupMaxFiles: number;
   libraryCleanupStateFile: string;
+  prowlarr: ServiceConfig | null;
+  jackett: ServiceConfig | null;
+  /** Indexer doctor (on when Prowlarr or Jackett is configured, unless INDEXER_DOCTOR=false). */
+  indexerDoctor: { intervalMs: number; stateFilePath: string } | null;
+  /** Health API for the dashboard (HEALTH_PORT=0 disables). */
+  health: HealthSettings | null;
   /** Junk tagger (opt-in, TASTE=true): null when disabled. */
   taste: TasteConfig | null;
   dryRun: boolean;
@@ -97,6 +125,22 @@ function loadArrConfig(urlKey: string, apiKeyKey: string): ArrConfig | null {
     throw new Error(`${apiKeyKey} is set but ${urlKey} is missing`);
   }
   return null;
+}
+
+/** "host:port" → parts; empty or "off" disables the check. */
+function parseHostPort(value: string | undefined, fallback: string | null, name: string): { host: string; port: number } | null {
+  const raw = value ?? fallback;
+  if (!raw || raw.toLowerCase() === "off") return null;
+  const m = raw.match(/^([^:]+):(\d+)$/);
+  if (!m) throw new Error(`${name} must be host:port, got "${raw}"`);
+  return { host: m[1], port: Number(m[2]) };
+}
+
+/** Optional URL with a default; "off" disables. */
+function optionalUrl(name: string, fallback: string | null): string | null {
+  const raw = process.env[name] ?? fallback;
+  if (!raw || raw.toLowerCase() === "off") return null;
+  return validateUrl(raw, name);
 }
 
 function buildCategoryMap(
@@ -241,6 +285,35 @@ export function loadConfig(): Config {
       }
     : null;
 
+  const prowlarr = loadArrConfig("PROWLARR_URL", "PROWLARR_API_KEY");
+  const jackett = loadArrConfig("JACKETT_URL", "JACKETT_API_KEY");
+  const indexerDoctor = (prowlarr || jackett) && process.env.INDEXER_DOCTOR?.toLowerCase() !== "false"
+    ? {
+        intervalMs: parseIntStrict(process.env.INDEXER_DOCTOR_INTERVAL_HOURS || "6", "INDEXER_DOCTOR_INTERVAL_HOURS", 1) * 3600_000,
+        stateFilePath: process.env.INDEXER_DOCTOR_STATE_FILE || "./indexer-doctor-state.json",
+      }
+    : null;
+
+  // Health API: service URLs default to the qBittorrent host (everything runs on arcade).
+  const host = new URL(qbitUrl).hostname;
+  const healthPort = parseIntStrict(process.env.HEALTH_PORT ?? "9798", "HEALTH_PORT", 0);
+  const health: HealthSettings | null = healthPort === 0 ? null : {
+    port: healthPort,
+    intervalMs: parseIntStrict(process.env.HEALTH_INTERVAL_SECONDS || "60", "HEALTH_INTERVAL_SECONDS", 10) * 1000,
+    jackettUrl: jackett?.url ?? null,
+    flaresolverrUrl: optionalUrl("FLARESOLVERR_URL", `http://${host}:8191`),
+    tdarrUrl: optionalUrl("TDARR_URL", `http://${host}:8265`),
+    plexUrl: optionalUrl("PLEX_URL", `http://${host}:32400`),
+    plexToken: process.env.PLEX_TOKEN || null,
+    languarrgeUrl: optionalUrl("LANGUARRGE_URL", "http://localhost:9799"),
+    languarrgeDb: process.env.LANGUARRGE_DB || null,
+    drivepoolPath: process.env.DRIVEPOOL_PATH === "off" ? null : process.env.DRIVEPOOL_PATH || "/mnt/j",
+    drivepoolTargetFreeBytes: parseIntStrict(process.env.DRIVEPOOL_TARGET_FREE_GB || "1000", "DRIVEPOOL_TARGET_FREE_GB", 1) * 1e9,
+    tailscaleRouter: parseHostPort(process.env.TAILSCALE_ROUTER, null, "TAILSCALE_ROUTER"),
+    gateway: parseHostPort(process.env.LAN_GATEWAY, null, "LAN_GATEWAY"),
+    netshPath: process.env.NETSH_PATH === "off" ? null : process.env.NETSH_PATH || null,
+  };
+
   const dryRunEnv = process.env.DRY_RUN;
   const dryRun = dryRunEnv?.toLowerCase() !== "false";
 
@@ -263,6 +336,10 @@ export function loadConfig(): Config {
     libraryPathMap,
     libraryCleanupMaxFiles,
     libraryCleanupStateFile: process.env.LIBRARY_CLEANUP_STATE_FILE || "./library-cleanup-state.json",
+    prowlarr,
+    jackett,
+    indexerDoctor,
+    health,
     taste,
     dryRun,
     logLevel: process.env.LOG_LEVEL || "info",

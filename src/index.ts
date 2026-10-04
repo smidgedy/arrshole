@@ -8,6 +8,10 @@ import { ArrClient } from "./clients/arr-client.js";
 import { Monitor } from "./monitor.js";
 import { StateTracker } from "./state-tracker.js";
 import { JunkTagger } from "./junk-tagger.js";
+import { ProwlarrClient } from "./clients/prowlarr.js";
+import { JackettClient } from "./clients/jackett.js";
+import { IndexerDoctor } from "./indexer-doctor.js";
+import { HealthMonitor } from "./health.js";
 
 const { values: cli } = parseArgs({
   options: {
@@ -182,6 +186,32 @@ if (cli.taste && !junkTagger) {
   process.exit(1);
 }
 
+const prowlarr = config.prowlarr ? new ProwlarrClient(config.prowlarr.url, config.prowlarr.apiKey, logger) : null;
+const jackett = config.jackett ? new JackettClient(config.jackett.url, config.jackett.apiKey) : null;
+const doctor = config.indexerDoctor
+  ? new IndexerDoctor(prowlarr, jackett, { ...config.indexerDoctor, dryRun: config.dryRun }, logger)
+  : null;
+
+const health = config.health
+  ? new HealthMonitor(
+      {
+        ...config.health,
+        arrs: [
+          ...(config.sonarr ? [{ id: "sonarr", name: "Sonarr", ...config.sonarr, apiVersion: "v3" as const }] : []),
+          ...(config.radarr ? [{ id: "radarr", name: "Radarr", ...config.radarr, apiVersion: "v3" as const }] : []),
+          ...(config.lidarr ? [{ id: "lidarr", name: "Lidarr", ...config.lidarr, apiVersion: "v1" as const }] : []),
+        ],
+        prowlarrUrl: config.prowlarr?.url ?? null,
+        qbitUrl: config.qbit.url,
+        tasteStateFile: config.taste?.stateFilePath ?? null,
+        pollIntervalMs: config.pollIntervalMs,
+        dryRun: config.dryRun,
+      },
+      { qbit, prowlarr, doctor, lastCycleAt: () => monitor.lastCycleAt },
+      logger,
+    )
+  : null;
+
 process.on("unhandledRejection", (err) => {
   logger.fatal({ err, uptimeSeconds: Math.round(process.uptime()) }, "Unhandled rejection — exiting");
   process.exit(1);
@@ -218,10 +248,13 @@ if (cli.now) {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       logger.info({ signal, uptimeSeconds: Math.round(process.uptime()) }, "Shutting down");
-      Promise.all([monitor.stop(), junkTagger?.stop()]).then(() => process.exit(0), () => process.exit(1));
+      doctor?.stop();
+      Promise.all([monitor.stop(), junkTagger?.stop(), health?.stop()]).then(() => process.exit(0), () => process.exit(1));
     });
   }
 
   monitor.start();
   junkTagger?.start();
+  doctor?.start();
+  health?.start();
 }

@@ -1,6 +1,6 @@
 import type { TorrentFile } from "../release-inspector.js";
 import type { Logger } from "../logger.js";
-import type { QBitTorrent, QBitTransferInfo } from "../types.js";
+import type { QBitServerState, QBitTorrent, QBitTransferInfo } from "../types.js";
 import { drain } from "../util.js";
 
 const REQUEST_TIMEOUT = 15000;
@@ -171,6 +171,40 @@ export class QBitClient {
     } catch {
       throw new Error("qBittorrent getTransferInfo returned invalid JSON");
     }
+  }
+
+  /** Session-wide state: connection status, external IP, free space. Re-authenticates on 403. */
+  async getServerState(): Promise<QBitServerState> {
+    const response = await this.fetchWithReauth(() =>
+      fetch(`${this.url}/api/v2/sync/maindata?rid=0`, {
+        headers: { Cookie: this.cookieHeader },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      }),
+    );
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`qBittorrent getServerState failed: HTTP ${response.status}`);
+    }
+    try {
+      return ((await response.json()) as { server_state: QBitServerState }).server_state;
+    } catch {
+      throw new Error("qBittorrent getServerState returned invalid JSON");
+    }
+  }
+
+  /** The torrent listen port from qBittorrent's preferences. */
+  async getListenPort(): Promise<number> {
+    const response = await this.fetchWithReauth(() =>
+      fetch(`${this.url}/api/v2/app/preferences`, {
+        headers: { Cookie: this.cookieHeader },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      }),
+    );
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`qBittorrent getPreferences failed: HTTP ${response.status}`);
+    }
+    return ((await response.json()) as { listen_port: number }).listen_port;
   }
 
   /** Delete a torrent and optionally its downloaded files. */

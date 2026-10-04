@@ -36,6 +36,17 @@ export interface QBitTransferInfo {
   up_info_speed: number; // global upload rate, bytes/s
 }
 
+/** Session state from qBittorrent's /sync/maindata `server_state`. */
+export interface QBitServerState {
+  connection_status: "connected" | "firewalled" | "disconnected";
+  dht_nodes: number;
+  free_space_on_disk: number;
+  /** IPv4 address peers see; qBittorrent 5+ only. */
+  last_external_address_v4?: string;
+  dl_info_speed: number;
+  up_info_speed: number;
+}
+
 export interface ArrQueueRecord {
   id: number;
   downloadId: string;
