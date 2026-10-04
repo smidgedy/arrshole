@@ -503,7 +503,7 @@ export class Monitor {
   /**
    * Bad-release reaper. Once qBittorrent knows a download's file list, check it contains at
    * least one file of the type its *arr imports (non-sample video for Sonarr/Radarr, audio for
-   * Lidarr; disc images don't count). If not, remove it through the *arr queue
+   * Lidarr; disc images don't count) and isn't an upscale. If not, remove it through the *arr queue
    * (removeFromClient + blocklist + re-search) so that exact release is never grabbed again.
    * Downloads that aren't in an *arr queue are left alone.
    *
@@ -531,7 +531,7 @@ export class Monitor {
       }
       if (files.length === 0) continue; // metadata not ready yet
 
-      const verdict = classifyRelease(files, kind);
+      const verdict = classifyRelease(files, kind, t.name);
       if (!verdict.bad) {
         this.inspectedReleases.add(t.hash);
         continue;

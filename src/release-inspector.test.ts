@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { classifyRelease, kindForApp } from "./release-inspector.js";
+import { classifyRelease, isUpscale, kindForApp } from "./release-inspector.js";
 
 const MB = 1024 * 1024;
 
@@ -41,6 +41,30 @@ describe("classifyRelease", () => {
 
   it("is case-insensitive on extensions", () => {
     assert.equal(classifyRelease([{ name: "FILM.M4V", size: 900 * MB }], "video").bad, false);
+  });
+});
+
+describe("upscales", () => {
+  it("flags upscaled releases by name, even before file metadata arrives", () => {
+    const name = "300 2006  2160p Open Matte AI Upscaled BluRay 60FPS.H265.SDR.DTS-HD MA TrueHD 7.1.MultiSubs Marjenbo";
+    assert.deepEqual(classifyRelease([], "video", name), { bad: true, reason: "upscaled release" });
+    assert.equal(classifyRelease([{ name: "300.mkv", size: 30000 * MB }], "video", name).bad, true);
+  });
+  it("flags an upscale named only in the video file", () => {
+    assert.equal(classifyRelease([{ name: "Film/Film.2160p.UPSCALED.mkv", size: 9000 * MB }], "video", "Film 2160p").bad, true);
+  });
+  it("recognises common upscale markers", () => {
+    for (const n of ["Film.2160p.Upscale.x265", "Film 4K AI-Upscaled", "Film.UpsUHD.2160p", "Film.Upconverted.1080p", "Film.AI.Enhanced.2160p", "Film_upscaled_HDR"]) {
+      assert.equal(isUpscale(n), true, n);
+    }
+  });
+  it("leaves normal releases and look-alike words alone", () => {
+    for (const n of ["Film.2160p.UHD.BluRay.x265", "Upstream.Color.2013.1080p", "The.Upside.2017.1080p", "Film.Remastered.1080p", "Scaled.Down.2020"]) {
+      assert.equal(isUpscale(n), false, n);
+    }
+  });
+  it("doesn't apply to Lidarr", () => {
+    assert.equal(classifyRelease([{ name: "01.flac", size: 30 * MB }], "audio", "Album (Upscaled Remaster)").bad, false);
   });
 });
 

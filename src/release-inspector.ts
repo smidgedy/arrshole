@@ -33,6 +33,16 @@ export function isSample(name: string, size: number): boolean {
   return /(^|[\W_])sample([\W_]|$)/i.test(name) && size < SAMPLE_MAX_BYTES;
 }
 
+/**
+ * Upscaled releases (AI or otherwise) are never wanted: they're bigger, not better.
+ * Matches "Upscaled", "AI Upscale", "UpsUHD", "Upconverted", "AI Enhanced" in any separator style.
+ */
+const UPSCALE_RE = /(^|[\W_])(up[\W_]?scal(e|ed|ing)|upsuhd|up[\W_]?conv(ert(ed)?)?|ai[\W_]?enhanced)([\W_]|$)/i;
+
+export function isUpscale(name: string): boolean {
+  return UPSCALE_RE.test(name);
+}
+
 export function kindForApp(app: string): MediaKind | null {
   if (app === "sonarr" || app === "radarr") return "video";
   if (app === "lidarr") return "audio";
@@ -42,13 +52,18 @@ export function kindForApp(app: string): MediaKind | null {
 /**
  * A release is bad if it doesn't contain at least one file of the type its *arr imports:
  * a (non-sample) video file for Sonarr/Radarr, an audio file for Lidarr.
+ * A video release is also bad if it's an upscale (by release name or video file name).
  */
-export function classifyRelease(files: TorrentFile[], kind: MediaKind): ReleaseVerdict {
+export function classifyRelease(files: TorrentFile[], kind: MediaKind, releaseName = ""): ReleaseVerdict {
+  if (kind === "video" && isUpscale(releaseName)) return { bad: true, reason: "upscaled release" };
   if (files.length === 0) return { bad: false }; // metadata not available yet
 
   const wanted = kind === "video" ? VIDEO_EXTS : AUDIO_EXTS;
   const ok = files.some((f) => wanted.has(ext(f.name)) && !(kind === "video" && isSample(f.name, f.size)));
-  if (ok) return { bad: false };
+  if (ok) {
+    const upscaled = kind === "video" && files.some((f) => VIDEO_EXTS.has(ext(f.name)) && isUpscale(f.name));
+    return upscaled ? { bad: true, reason: "upscaled release" } : { bad: false };
+  }
 
   const largest = files.reduce((a, b) => (b.size > a.size ? b : a));
   return { bad: true, reason: `no ${kind} file in release (largest file: ${baseName(largest.name)})` };
