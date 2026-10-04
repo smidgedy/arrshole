@@ -74,6 +74,8 @@ export interface Config {
   jackett: ServiceConfig | null;
   /** Indexer doctor (on when Prowlarr or Jackett is configured, unless INDEXER_DOCTOR=false). */
   indexerDoctor: { intervalMs: number; stateFilePath: string } | null;
+  /** Anime classifier (on whenever Sonarr is configured, unless ANIME_CLASSIFIER=false). */
+  anime: { intervalMs: number; profileName: string; optOutTag: string; maxChangesPerRun: number } | null;
   /** Health API for the dashboard (HEALTH_PORT=0 disables). */
   health: HealthSettings | null;
   /** Junk tagger (opt-in, TASTE=true): null when disabled. */
@@ -302,6 +304,15 @@ export function loadConfig(): Config {
       }
     : null;
 
+  const anime = sonarr && process.env.ANIME_CLASSIFIER?.toLowerCase() !== "false"
+    ? {
+        intervalMs: 24 * 3600_000,
+        profileName: process.env.ANIME_PROFILE || "Anime",
+        optOutTag: "not-anime",
+        maxChangesPerRun: parseIntStrict(process.env.ANIME_MAX_CHANGES || "100", "ANIME_MAX_CHANGES", 1),
+      }
+    : null;
+
   // Health API: service URLs default to the qBittorrent host (everything runs on arcade).
   const host = new URL(qbitUrl).hostname;
   const healthPort = parseIntStrict(process.env.HEALTH_PORT ?? "9798", "HEALTH_PORT", 0);
@@ -351,6 +362,7 @@ export function loadConfig(): Config {
     prowlarr,
     jackett,
     indexerDoctor,
+    anime,
     health,
     taste,
     dryRun,

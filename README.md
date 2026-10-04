@@ -94,6 +94,8 @@ All configuration is via environment variables in `.env`.
 | `JACKETT_URL` / `JACKETT_API_KEY` | No | — | Jackett (Torznab API key only), tested and reported by the indexer doctor |
 | `INDEXER_DOCTOR` | No | `true` | Set to `false` to turn the indexer doctor off (it only runs when Prowlarr or Jackett is configured) |
 | `INDEXER_DOCTOR_INTERVAL_HOURS` | No | `6` | How often failing indexers are tested and repaired |
+| `ANIME_CLASSIFIER` | No | `true` | Set to `false` to stop switching anime series to the anime type/profile |
+| `ANIME_PROFILE` / `ANIME_MAX_CHANGES` | No | `Anime` / `100` | Sonarr profile anime gets, and the per-run cap |
 | `HEALTH_PORT` | No | `9798` | Port for the read-only health API (`0` disables) |
 | `HEALTH_INTERVAL_SECONDS` | No | `60` | How often the health snapshot is rebuilt |
 | `FLARESOLVERR_URL` / `TDARR_URL` / `PLEX_URL` | No | qBittorrent host on `:8191` / `:8265` / `:32400` | Services checked by the health API (`off` skips one) |
@@ -220,6 +222,10 @@ On whenever Prowlarr or Jackett is configured. Every `INDEXER_DOCTOR_INTERVAL_HO
 - **Site moved** to another of the definition's own URLs: switches the indexer's base URL.
 
 A fix is only saved if the indexer then passes Prowlarr's own test. Login failures are flagged for a person straight away; anything else is flagged once it has failed for a day (a changed site layout needs an updated definition, which Prowlarr and Jackett fetch themselves). Jackett indexers are tested and reported but never changed. `DRY_RUN` applies. Results appear in the health API.
+
+### Anime classifier
+
+On whenever Sonarr is configured. Once a day (first run 3 minutes after start) it finds series whose TheTVDB metadata says anime — genre Anime or Animation **and** original language Japanese — and switches them to Sonarr's anime series type (absolute episode numbering) and the `Anime` quality profile, in one bulk edit. Western shows tagged Anime and Japanese live action are left alone. It only switches towards anime; tag a series `not-anime` to keep it standard. `DRY_RUN` applies; `ANIME_MAX_CHANGES` caps changes per run.
 
 ### Health API
 

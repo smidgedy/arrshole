@@ -12,6 +12,7 @@ import { ProwlarrClient } from "./clients/prowlarr.js";
 import { JackettClient } from "./clients/jackett.js";
 import { IndexerDoctor } from "./indexer-doctor.js";
 import { HealthMonitor } from "./health.js";
+import { AnimeClassifier } from "./anime-classifier.js";
 
 const { values: cli } = parseArgs({
   options: {
@@ -192,6 +193,11 @@ const doctor = config.indexerDoctor
   ? new IndexerDoctor(prowlarr, jackett, { ...config.indexerDoctor, dryRun: config.dryRun }, logger)
   : null;
 
+const sonarrClient = arrClients.get("sonarr");
+const animeClassifier = config.anime && sonarrClient
+  ? new AnimeClassifier(sonarrClient, config.anime, config.dryRun, logger)
+  : null;
+
 const health = config.health
   ? new HealthMonitor(
       {
@@ -249,6 +255,7 @@ if (cli.now) {
     process.on(signal, () => {
       logger.info({ signal, uptimeSeconds: Math.round(process.uptime()) }, "Shutting down");
       doctor?.stop();
+      animeClassifier?.stop();
       Promise.all([monitor.stop(), junkTagger?.stop(), health?.stop()]).then(() => process.exit(0), () => process.exit(1));
     });
   }
@@ -256,5 +263,6 @@ if (cli.now) {
   monitor.start();
   junkTagger?.start();
   doctor?.start();
+  animeClassifier?.start();
   health?.start();
 }

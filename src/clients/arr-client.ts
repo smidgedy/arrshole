@@ -2,6 +2,16 @@ import type { Logger } from "../logger.js";
 import type { ArrQueueRecord, ArrRejectRecord } from "../types.js";
 import { drain } from "../util.js";
 
+export interface SeriesSummary {
+  id: number;
+  title: string;
+  seriesType: string;
+  qualityProfileId: number;
+  genres?: string[];
+  originalLanguage?: { id: number; name: string };
+  tags: number[];
+}
+
 const REQUEST_TIMEOUT = 15000;
 const PAGE_SIZE = 200;
 const MAX_PAGES = 50;
@@ -322,6 +332,49 @@ export class ArrClient {
     if (!response.ok) {
       await drain(response);
       throw new Error(`${this.name} editTag (${mode}) failed: HTTP ${response.status}`);
+    }
+    await drain(response);
+  }
+
+  /** Sonarr's series list (only the fields arrshole reads). */
+  async getSeries(): Promise<SeriesSummary[]> {
+    const response = await fetch(this.apiUrl("/series"), {
+      headers: this.headers,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`${this.name} getSeries failed: HTTP ${response.status}`);
+    }
+    return (await response.json()) as SeriesSummary[];
+  }
+
+  /** Quality profiles as name -> id. */
+  async getQualityProfiles(): Promise<Map<string, number>> {
+    const response = await fetch(this.apiUrl("/qualityprofile"), {
+      headers: this.headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+    });
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`${this.name} getQualityProfiles failed: HTTP ${response.status}`);
+    }
+    const profiles = (await response.json()) as Array<{ id: number; name: string }>;
+    return new Map(profiles.map((p) => [p.name, p.id]));
+  }
+
+  /** Set series type and/or quality profile on many series via Sonarr's bulk editor. */
+  async editSeries(ids: number[], changes: { seriesType?: string; qualityProfileId?: number }): Promise<void> {
+    if (ids.length === 0) return;
+    const response = await fetch(this.apiUrl("/series/editor"), {
+      method: "PUT",
+      headers: { ...this.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ seriesIds: ids, ...changes }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) {
+      await drain(response);
+      throw new Error(`${this.name} editSeries failed: HTTP ${response.status}`);
     }
     await drain(response);
   }
