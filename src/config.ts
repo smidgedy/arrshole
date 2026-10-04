@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 export interface ArrConfig {
   url: string;
   apiKey: string;
@@ -134,6 +136,10 @@ function parseHostPort(value: string | undefined, fallback: string | null, name:
   const m = raw.match(/^([^:]+):(\d+)$/);
   if (!m) throw new Error(`${name} must be host:port, got "${raw}"`);
   return { host: m[1], port: Number(m[2]) };
+}
+
+function firstExisting(paths: string[]): string | null {
+  return paths.find((p) => existsSync(p)) ?? null;
 }
 
 /** Optional URL with a default; "off" disables. */
@@ -306,12 +312,14 @@ export function loadConfig(): Config {
     plexUrl: optionalUrl("PLEX_URL", `http://${host}:32400`),
     plexToken: process.env.PLEX_TOKEN || null,
     languarrgeUrl: optionalUrl("LANGUARRGE_URL", "http://localhost:9799"),
-    languarrgeDb: process.env.LANGUARRGE_DB || null,
+    languarrgeDb: process.env.LANGUARRGE_DB || firstExisting([`${process.env.HOME}/development/languarrge/languarrge.db`]),
     drivepoolPath: process.env.DRIVEPOOL_PATH === "off" ? null : process.env.DRIVEPOOL_PATH || "/mnt/j",
     drivepoolTargetFreeBytes: parseIntStrict(process.env.DRIVEPOOL_TARGET_FREE_GB || "1024", "DRIVEPOOL_TARGET_FREE_GB", 1) * 1024 ** 3,
-    tailscaleRouter: parseHostPort(process.env.TAILSCALE_ROUTER, null, "TAILSCALE_ROUTER"),
-    gateway: parseHostPort(process.env.LAN_GATEWAY, null, "LAN_GATEWAY"),
-    netshPath: process.env.NETSH_PATH === "off" ? null : process.env.NETSH_PATH || null,
+    // Defaults are this house's network: smidge-desktop is the Tailscale subnet router
+    // (port 445 is open through its firewall), the router is 192.168.86.1.
+    tailscaleRouter: parseHostPort(process.env.TAILSCALE_ROUTER, "192.168.86.37:445", "TAILSCALE_ROUTER"),
+    gateway: parseHostPort(process.env.LAN_GATEWAY, "192.168.86.1:80", "LAN_GATEWAY"),
+    netshPath: process.env.NETSH_PATH === "off" ? null : process.env.NETSH_PATH || firstExisting(["/mnt/c/Windows/System32/netsh.exe"]),
   };
 
   const dryRunEnv = process.env.DRY_RUN;

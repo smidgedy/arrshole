@@ -97,10 +97,10 @@ All configuration is via environment variables in `.env`.
 | `HEALTH_PORT` | No | `9798` | Port for the read-only health API (`0` disables) |
 | `HEALTH_INTERVAL_SECONDS` | No | `60` | How often the health snapshot is rebuilt |
 | `FLARESOLVERR_URL` / `TDARR_URL` / `PLEX_URL` | No | qBittorrent host on `:8191` / `:8265` / `:32400` | Services checked by the health API (`off` skips one) |
-| `LANGUARRGE_URL` / `LANGUARRGE_DB` | No | `http://localhost:9799` / — | languarrge receiver, and its SQLite queue for queue depth |
+| `LANGUARRGE_URL` / `LANGUARRGE_DB` | No | `http://localhost:9799` / `~/development/languarrge/languarrge.db` if present | languarrge receiver, and its SQLite queue for queue depth |
 | `DRIVEPOOL_PATH` / `DRIVEPOOL_TARGET_FREE_GB` | No | `/mnt/j` / `1024` | Library volume and its free-space goal (GiB, as Windows reports it) |
-| `TAILSCALE_ROUTER` / `LAN_GATEWAY` | No | — | `host:port` reachability targets for the network checks |
-| `NETSH_PATH` | No | — | Windows `netsh.exe` (WSL interop) to check portproxy rules point at the current WSL IP |
+| `TAILSCALE_ROUTER` / `LAN_GATEWAY` | No | `192.168.86.37:445` / `192.168.86.1:80` | `host:port` reachability targets for the network checks |
+| `NETSH_PATH` | No | `/mnt/c/Windows/System32/netsh.exe` if present | Windows `netsh.exe` (WSL interop) to check portproxy rules point at the current WSL IP |
 | `DRY_RUN` | No | `true` | Set to `false` to enable destructive actions |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error`, `fatal` |
 | `STATE_FILE` | No | `./arrshole-state.json` | Path to persist tracking state across restarts |
