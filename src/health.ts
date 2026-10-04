@@ -48,6 +48,9 @@ export interface HealthConfig {
   drivepoolPath: string | null;
   /** Below this much free space the pool is a warning (the 1 TB goal); a quarter of it is an error. */
   drivepoolTargetFreeBytes: number;
+  /** qBittorrent's download disk (I:); big remuxes land here before import. */
+  torrentDiskPath: string | null;
+  torrentDiskTargetFreeBytes: number;
   tasteStateFile: string | null;
   pollIntervalMs: number;
   dryRun: boolean;
@@ -77,7 +80,7 @@ export function arrHealthDetails(items: Array<{ type: string; message: string }>
   return { status, details: relevant.map((i) => i.message) };
 }
 
-export function drivepoolStatus(freeBytes: number, targetFreeBytes: number): Status {
+export function diskStatus(freeBytes: number, targetFreeBytes: number): Status {
   if (freeBytes < targetFreeBytes / 4) return "error";
   return freeBytes < targetFreeBytes ? "warn" : "ok";
 }
@@ -204,7 +207,8 @@ export class HealthMonitor {
     if (c.flaresolverrUrl) checks.push(this.safe("flaresolverr", "FlareSolverr", "indexers", null, () => this.checkFlaresolverr()));
     for (const a of c.arrs) checks.push(this.safe(a.id, a.name, "arr", a.url, () => this.checkArr(a)));
     checks.push(this.safe("qbittorrent", "qBittorrent", "download", c.qbitUrl, () => this.checkQbit(qs)));
-    if (c.drivepoolPath) checks.push(this.safe("drivepool", "DrivePool (J:)", "storage", null, () => this.checkDrivepool()));
+    if (c.torrentDiskPath) checks.push(this.safe("torrent-disk", "Torrent disk (I:)", "storage", null, () => this.checkDisk(c.torrentDiskPath!, c.torrentDiskTargetFreeBytes)));
+    if (c.drivepoolPath) checks.push(this.safe("drivepool", "DrivePool (J:)", "storage", null, () => this.checkDisk(c.drivepoolPath!, c.drivepoolTargetFreeBytes)));
     if (c.languarrgeUrl) checks.push(this.safe("languarrge", "languarrge", "processing", null, () => this.checkLanguarrge()));
     if (c.tdarrUrl) checks.push(this.safe("tdarr", "Tdarr", "processing", c.tdarrUrl, () => this.checkTdarr()));
     if (c.plexUrl) checks.push(this.safe("plex", "Plex", "playback", `${c.plexUrl}/web`, () => this.checkPlex()));
@@ -377,13 +381,12 @@ export class HealthMonitor {
     };
   }
 
-  private async checkDrivepool() {
-    const s = await statfs(this.cfg.drivepoolPath!);
+  private async checkDisk(path: string, target: number) {
+    const s = await statfs(path);
     const free = s.bavail * s.bsize;
     const total = s.blocks * s.bsize;
-    const target = this.cfg.drivepoolTargetFreeBytes;
     return {
-      status: drivepoolStatus(free, target),
+      status: diskStatus(free, target),
       summary: `${formatBytes(free)} free of ${formatBytes(total)} (goal ${formatBytes(target)})`,
       details: [],
       metrics: { freeBytes: free, totalBytes: total, targetFreeBytes: target },

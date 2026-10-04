@@ -41,6 +41,8 @@ export interface HealthSettings {
   languarrgeDb: string | null;
   drivepoolPath: string | null;
   drivepoolTargetFreeBytes: number;
+  torrentDiskPath: string | null;
+  torrentDiskTargetFreeBytes: number;
   tailscaleRouter: { host: string; port: number } | null;
   gateway: { host: string; port: number } | null;
   netshPath: string | null;
@@ -317,6 +319,8 @@ export function loadConfig(): Config {
     drivepoolTargetFreeBytes: parseIntStrict(process.env.DRIVEPOOL_TARGET_FREE_GB || "1024", "DRIVEPOOL_TARGET_FREE_GB", 1) * 1024 ** 3,
     // Defaults are this house's network: smidge-desktop is the Tailscale subnet router
     // (port 445 is open through its firewall), the router is 192.168.86.1.
+    torrentDiskPath: process.env.TORRENT_DISK_PATH === "off" ? null : process.env.TORRENT_DISK_PATH || firstExisting(["/mnt/i"]),
+    torrentDiskTargetFreeBytes: parseIntStrict(process.env.TORRENT_DISK_TARGET_FREE_GB || "200", "TORRENT_DISK_TARGET_FREE_GB", 1) * 1024 ** 3,
     tailscaleRouter: parseHostPort(process.env.TAILSCALE_ROUTER, "192.168.86.37:445", "TAILSCALE_ROUTER"),
     gateway: parseHostPort(process.env.LAN_GATEWAY, "192.168.86.1:80", "LAN_GATEWAY"),
     netshPath: process.env.NETSH_PATH === "off" ? null : process.env.NETSH_PATH || firstExisting(["/mnt/c/Windows/System32/netsh.exe"]),

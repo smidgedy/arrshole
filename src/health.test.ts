@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { arrHealthDetails, drivepoolStatus, formatBytes, HealthMonitor, parsePortproxy, vpnStatus, worst, type HealthConfig } from "./health.js";
+import { arrHealthDetails, diskStatus, formatBytes, HealthMonitor, parsePortproxy, vpnStatus, worst, type HealthConfig } from "./health.js";
 import type { QBitClient } from "./clients/qbittorrent.js";
 import { makeSilentLogger } from "./test-helpers.js";
 
@@ -21,11 +21,11 @@ describe("health helpers", () => {
     assert.equal(arrHealthDetails([{ type: "warning", message: "x was removed from TheTVDB" }]).status, "ok");
   });
 
-  it("grades DrivePool free space against the goal", () => {
+  it("grades free disk space against its goal", () => {
     const tb = 1e12;
-    assert.equal(drivepoolStatus(1.2 * tb, tb), "ok");
-    assert.equal(drivepoolStatus(0.58 * tb, tb), "warn");
-    assert.equal(drivepoolStatus(0.2 * tb, tb), "error");
+    assert.equal(diskStatus(1.2 * tb, tb), "ok");
+    assert.equal(diskStatus(0.58 * tb, tb), "warn");
+    assert.equal(diskStatus(0.2 * tb, tb), "error");
   });
 
   it("flags qBittorrent leaking outside the VPN", () => {
@@ -53,7 +53,7 @@ describe("HealthMonitor", () => {
   const cfg: HealthConfig = {
     port: 0, intervalMs: 60_000, arrs: [], prowlarrUrl: null, jackettUrl: null, flaresolverrUrl: null,
     tdarrUrl: null, plexUrl: null, plexToken: null, qbitUrl: "http://q", languarrgeUrl: null, languarrgeDb: null,
-    drivepoolPath: null, drivepoolTargetFreeBytes: 1e12, tasteStateFile: null, pollIntervalMs: 60_000, dryRun: false,
+    drivepoolPath: null, drivepoolTargetFreeBytes: 1e12, torrentDiskPath: null, torrentDiskTargetFreeBytes: 1e11, tasteStateFile: null, pollIntervalMs: 60_000, dryRun: false,
     tailscaleRouter: null, gateway: null, netshPath: null,
   };
 

@@ -60,6 +60,7 @@ interface IndexerCheck {
 | `flaresolverr` | indexers | `up` |
 | `sonarr` / `radarr` / `lidarr` | arr | `queue`, `healthWarnings`, `version` |
 | `qbittorrent` | download | `downloading`, `stalled`, `seeding`, `dlBytesPerSec`, `upBytesPerSec`, `connection` (`connected`/`firewalled`/`disconnected`), `torrentDiskFreeBytes` |
+| `torrent-disk` | storage | `freeBytes`, `totalBytes`, `targetFreeBytes` (200 GB): qBittorrent's download disk, I: |
 | `drivepool` | storage | `freeBytes`, `totalBytes`, `targetFreeBytes` (1 TB) |
 | `languarrge` | processing | `receiverUp`, `queued`, `failed` |
 | `tdarr` | processing | `queue`, `transcodeErrors`, `healthErrors`, `nodesOnline`, `nodes` (comma list), `workersActive` |

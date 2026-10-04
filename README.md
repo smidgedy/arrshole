@@ -98,6 +98,7 @@ All configuration is via environment variables in `.env`.
 | `HEALTH_INTERVAL_SECONDS` | No | `60` | How often the health snapshot is rebuilt |
 | `FLARESOLVERR_URL` / `TDARR_URL` / `PLEX_URL` | No | qBittorrent host on `:8191` / `:8265` / `:32400` | Services checked by the health API (`off` skips one) |
 | `LANGUARRGE_URL` / `LANGUARRGE_DB` | No | `http://localhost:9799` / `~/development/languarrge/languarrge.db` if present | languarrge receiver, and its SQLite queue for queue depth |
+| `TORRENT_DISK_PATH` / `TORRENT_DISK_TARGET_FREE_GB` | No | `/mnt/i` if present / `200` | qBittorrent's download disk and its free-space floor (GiB) |
 | `DRIVEPOOL_PATH` / `DRIVEPOOL_TARGET_FREE_GB` | No | `/mnt/j` / `1024` | Library volume and its free-space goal (GiB, as Windows reports it) |
 | `TAILSCALE_ROUTER` / `LAN_GATEWAY` | No | `192.168.86.37:445` / `192.168.86.1:80` | `host:port` reachability targets for the network checks |
 | `NETSH_PATH` | No | `/mnt/c/Windows/System32/netsh.exe` if present | Windows `netsh.exe` (WSL interop) to check portproxy rules point at the current WSL IP |
