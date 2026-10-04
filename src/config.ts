@@ -308,7 +308,7 @@ export function loadConfig(): Config {
     languarrgeUrl: optionalUrl("LANGUARRGE_URL", "http://localhost:9799"),
     languarrgeDb: process.env.LANGUARRGE_DB || null,
     drivepoolPath: process.env.DRIVEPOOL_PATH === "off" ? null : process.env.DRIVEPOOL_PATH || "/mnt/j",
-    drivepoolTargetFreeBytes: parseIntStrict(process.env.DRIVEPOOL_TARGET_FREE_GB || "1000", "DRIVEPOOL_TARGET_FREE_GB", 1) * 1e9,
+    drivepoolTargetFreeBytes: parseIntStrict(process.env.DRIVEPOOL_TARGET_FREE_GB || "1024", "DRIVEPOOL_TARGET_FREE_GB", 1) * 1024 ** 3,
     tailscaleRouter: parseHostPort(process.env.TAILSCALE_ROUTER, null, "TAILSCALE_ROUTER"),
     gateway: parseHostPort(process.env.LAN_GATEWAY, null, "LAN_GATEWAY"),
     netshPath: process.env.NETSH_PATH === "off" ? null : process.env.NETSH_PATH || null,
